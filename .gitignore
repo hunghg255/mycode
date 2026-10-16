@@ -1,0 +1,9 @@
+/build/
+/.mygo/
+mygo_windows_*.syso
+/mayoi
+/cmd/mayoi/mayoi
+/.agents/
+/.claude/worktrees/
+/.qoder/worktrees/
+
