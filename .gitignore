@@ -7,3 +7,6 @@ mygo_windows_*.syso
 /.claude/worktrees/
 /.qoder/worktrees/
 
+/docs/node_modules/
+/docs/dist/
+/docs/*.tsbuildinfo
