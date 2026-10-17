@@ -5,6 +5,9 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- A minimap along the right of each editor, as in VS Code: the whole file, small, in its colors, with the lines changed
+  since the last commit and the selection. A click scrolls there, the slider drags, and the wheel over it scrolls the
+  editor. Drag its left edge to make it wider or narrower (`minimapWidth`); **View → Minimap** hides it (`minimap`).
 - Ctrl+click (⌘-click on macOS) on a file path a terminal prints opens the file in the editor at its line and column,
   as `src/app.go:12:5` from a compiler or an agent: relative to the shell's folder or the project, absolute, `~/`,
   on Windows `C:\dir\file`, `dir\file`, Git Bash's `/c/...` and WSL's `/mnt/c/...`, or a `file://` link. A folder of the project shows in the Explorer.

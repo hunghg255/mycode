@@ -85,6 +85,7 @@ type editor struct {
 	selShape selectionShape
 	stuck    stickyCache
 	overview overview
+	mini     minimapState
 
 	vscroll ui.ScrollState // the text area's
 	hscroll ui.ScrollState // the container that scrolls it sideways

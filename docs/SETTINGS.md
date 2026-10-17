@@ -59,6 +59,8 @@ takes its default.
 | `autoSave`             | `true`        | `true`, `false`                                             | **File → Auto Save**                           |
 | `wordWrap`             | `false`       | `true`, `false`                                             | **View → Word Wrap**                           |
 | `blame`                | `true`        | `true`, `false`                                             | **Git → Inline Blame**                         |
+| `minimap`              | `true`        | `true`, `false`                                             | **View → Minimap**                             |
+| `minimapWidth`         | `90`          | 40 to 400                                                   | Dragging the minimap's left edge               |
 | `diffLayout`           | `""`          | `""` (side by side when wide enough), `"split"`, `"inline"` | A diff's **Layout** button                     |
 | `scmTree`              | `false`       | `true`, `false`                                             | **View as Tree** in Source Control's menu      |
 | `scmAllBranches`       | `false`       | `true`, `false`                                             | **Show All Branches** in Source Control's menu |
@@ -113,6 +115,8 @@ differ in width lines them up only roughly.
 - **`wordWrap`** wraps long lines at the edge of the editor. **⌥Z** wraps or unwraps one tab only, until this
   setting changes.
 - **`blame`** shows who last changed the caret's line, and when, at the end of the line.
+- **`minimap`** shows the whole file, small, along the right of each editor, and **`minimapWidth`** is how wide it
+  is, in points.
 - **`scmTree`** lists Source Control's changes in a tree of their folders, rather than by path.
 - **`scmAllBranches`** shows the commits of every branch and tag, not only those of the branch checked out.
 

@@ -33,6 +33,14 @@ closing a folder forgets the tabs closed.
 Long lines scroll sideways by default. **View → Word Wrap** wraps them at the edge of the editor. ⌥Z toggles wrapping
 for the current tab only, until the setting changes again.
 
+### Minimap
+
+The minimap along the right of an editor shows the whole file, small, in its colors, with the lines changed since the
+last commit along its left edge and the selection. Its slider covers the lines in view: drag it to scroll, click
+elsewhere to bring it there, or turn the wheel over the minimap. A long file's minimap scrolls with the editor, as in
+VS Code. Drag its left edge to make it wider or narrower. **View → Minimap** hides it in every editor, as
+`editor.action.toggleMinimap` does in keybindings.json, and an editor too narrow for it has none.
+
 ### Auto save
 
 A changed file saves:

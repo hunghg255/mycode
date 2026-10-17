@@ -121,6 +121,10 @@ type Prefs struct {
 	ScmAllBranches bool `json:"scmAllBranches,omitempty"`
 	// Blame shows who last changed the caret's line, and when, after it.
 	Blame bool `json:"blame"`
+	// Minimap shows the whole file, small, along the right of an editor,
+	// as VS Code's, and MinimapWidth is how wide it is.
+	Minimap      bool    `json:"minimap"`
+	MinimapWidth float32 `json:"minimapWidth,omitempty"`
 	// Appearance is "light", "dark", or "" to follow the system.
 	Appearance string `json:"appearance,omitempty"`
 	// Theme is "matrix" for The Matrix, which is always dark, "claude" for
@@ -230,6 +234,14 @@ type Tab struct {
 	Wrap    *bool   `json:"wrap,omitempty"`
 }
 
+// The minimap's width, in DIPs: a first launch's, and as narrow and as
+// wide as it goes.
+const (
+	DefaultMinimapWidth = 90
+	MinMinimapWidth     = 40
+	MaxMinimapWidth     = 400
+)
+
 // Default is the settings of a first launch.
 // TerminalProfile is a shell a terminal starts: its name, the program and
 // the program's arguments.
@@ -244,6 +256,7 @@ func Default() *Settings {
 		Prefs: Prefs{
 			FontSize: 13, FontFamily: "monospace", FontWeight: 400, LineHeight: 1.55,
 			AutoSave: true, Blame: true, TerminalCopyOnSelect: true, ProjectTabs: true,
+			Minimap: true, MinimapWidth: DefaultMinimapWidth,
 		},
 	}
 }
@@ -325,6 +338,10 @@ func (s *Settings) normalize() {
 	}
 	s.LineHeight = clamp(s.LineHeight, 1, 3)
 	s.FontFeatures = slices.DeleteFunc(s.FontFeatures, func(f string) bool { return strings.TrimSpace(f) == "" })
+	if s.MinimapWidth == 0 {
+		s.MinimapWidth = DefaultMinimapWidth
+	}
+	s.MinimapWidth = clamp(s.MinimapWidth, MinMinimapWidth, MaxMinimapWidth)
 	if s.TerminalFontSize != 0 {
 		s.TerminalFontSize = clamp(s.TerminalFontSize, 9, 28)
 	}

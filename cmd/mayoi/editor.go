@@ -146,8 +146,15 @@ func (a *app) editorView(c *ui.Context, d *editor) {
 	if wrap {
 		d.hscroll.X = 0
 	}
+	// The minimap, along the right, takes its width from the text.
+	minimap := a.showsMinimap(d, view.W)
+	d.mini.shown = minimap
+	var mapW float32
+	if minimap {
+		mapW = a.settings.MinimapWidth
+	}
 
-	ui.ScrollHorizontal(c).TrackScroll(&d.hscroll).Fill().Background(p.editor).Children(func() {
+	ui.ScrollHorizontal(c).TrackScroll(&d.hscroll).Absolute().Top(0).Left(0).Bottom(0).Right(mapW).Background(p.editor).Children(func() {
 		area := ui.TextAreaBufferBase(c, d.buf).
 			Font(f.family).FontSize(f.size).FontWeight(f.weight).FontFeatures(f.featureList()...).FixedLineHeight(f.lineH).TextColor(p.text).
 			FillHeight().
@@ -265,7 +272,13 @@ func (a *app) editorView(c *ui.Context, d *editor) {
 		}
 
 		if d.hl != nil && d.hl.Lexer() != nil {
-			d.hl.Request(snap, first, last)
+			// The lines in view, and those the minimap shows.
+			from, to := first, last
+			if minimap {
+				mf, ml := minimapGeom(g, d.vscroll.Y, view.H).lines(g, view.H)
+				from, to = min(from, mf), max(to, ml)
+			}
+			d.hl.Request(snap, from, to)
 			area.TextRanges(d.colors.ranges(d.hl, p, snap, first, last)...)
 		}
 
@@ -523,6 +536,9 @@ func (a *app) editorView(c *ui.Context, d *editor) {
 			}
 		})
 	})
+	if minimap {
+		a.minimapView(c, d, g, view.H)
+	}
 	if d.shownFrame == a.frame {
 		// Built again, the text area scrolls to the selection it is given:
 		// it is covered for that frame, until the pin puts it back.

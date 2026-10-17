@@ -157,6 +157,7 @@ func (a *app) commands() []command {
 		{"view.moveTabNext", "Move Tab to Next Column", "", func() { a.moveTabBy(1) }},
 		{"view.moveTabPrev", "Move Tab to Previous Column", "", func() { a.moveTabBy(-1) }},
 		{"view.wordWrap", "Word Wrap", "", a.toggleWordWrap},
+		{"view.minimap", "Minimap", "", a.toggleMinimap},
 		{"view.projectTabs", "Project Tabs", "", a.toggleProjectTabs},
 		{"view.projectIcons", "Project Icons", "", a.toggleProjectIcons},
 		{"view.wordWrapTab", "Toggle Word Wrap in Tab", "Alt+Z", a.toggleTabWrap},
@@ -443,7 +444,7 @@ func (a *app) menu(cli bool, run func(id string, win *mygo.Window)) *mygo.Menu {
 		}},
 		{Label: "View", Submenu: []*mygo.MenuItem{
 			item("view.sidebar"), checkbox("view.sidebarRight", a.settings.SidebarRight), item("view.explorer"), item("view.search"), item("view.scm"), mygo.Separator(),
-			checkbox("view.wordWrap", a.settings.WordWrap), item("view.wordWrapTab"), item("view.togglePreview"),
+			checkbox("view.wordWrap", a.settings.WordWrap), item("view.wordWrapTab"), checkbox("view.minimap", a.settings.Minimap), item("view.togglePreview"),
 			checkbox("view.projectTabs", a.settings.ProjectTabs), checkbox("view.projectIcons", a.settings.ProjectIcons), mygo.Separator(),
 			item("view.splitRight"), item("view.nextColumn"), item("view.prevColumn"),
 			item("view.moveTabNext"), item("view.moveTabPrev"), mygo.Separator(),
