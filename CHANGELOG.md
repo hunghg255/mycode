@@ -5,6 +5,9 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Ctrl+click (⌘-click on macOS) on a file path a terminal prints opens the file in the editor at its line and column,
+  as `src/app.go:12:5` from a compiler or an agent: relative to the shell's folder or the project, absolute, `~/`,
+  on Windows `C:\dir\file`, `dir\file`, Git Bash's `/c/...` and WSL's `/mnt/c/...`, or a `file://` link. A folder of the project shows in the Explorer.
 - Windows: terminals use the ConPTY of Windows Terminal, shipped with the app, instead of Windows 10's own, which
   dropped the mouse and the full screen of programs such as Claude Code, Codex and pi: they no longer lag, and the
   wheel scrolls them.

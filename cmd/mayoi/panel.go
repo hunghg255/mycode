@@ -117,6 +117,8 @@ func (a *app) spawnTerminal(s *session, dir string) (*terminal.Terminal, error) 
 		OnTitle: func(title string) {
 			a.post(func() { s.title = title })
 		},
+		// A path a program prints opens in the editor, at its line.
+		OpenLink: func(link string) bool { return a.openTermLink(s, link) },
 		// The shortcuts of keybindings.json, before the shell, and on
 		// Windows and Linux those of Mayoi's it leaves to Mayoi.
 		OnKey: func(mods ui.Modifiers, key ui.Key) bool {

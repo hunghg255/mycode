@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -451,10 +450,11 @@ func TestMarkdownDebounceAndClosedResult(t *testing.T) {
 	hs := newHarness(t, true)
 	a := hs.a
 	fifo := hs.path("fifo")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
+	special := []string{"/dev/zero"}
+	if makeFifo(t, fifo) {
+		special = append(special, fifo)
 	}
-	for _, path := range []string{fifo, "/dev/zero"} {
+	for _, path := range special {
 		done := make(chan error, 1)
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)

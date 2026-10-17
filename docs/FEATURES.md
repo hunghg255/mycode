@@ -288,7 +288,9 @@ between the panel and a column by dragging it or from its menu, and maximize the
 Files dropped on a terminal type their paths, quoted for the shell. ⌘V with only an image on the clipboard sends an empty
 bracketed paste, as VS Code's terminal does, so that Claude Code pastes the screenshot. Selecting text copies it, as
 in Ghostty and iTerm2: a drag, a double click for a word, a triple click for a line, Shift with a drag in a program
-that takes the mouse, or Select All. `terminalCopyOnSelect` turns it off.
+that takes the mouse, or Select All. `terminalCopyOnSelect` turns it off. Ctrl+click (⌘-click on macOS) opens a link
+in the browser, and a file path, as `src/app.go:12:5`, in the editor at its line and column; a folder of the project
+shows in the Explorer.
 
 Terminal profiles choose the shell, as in VS Code. MyCode finds PowerShell 7, Windows PowerShell, Command Prompt, Git
 Bash and WSL on Windows, and the shells of `/etc/shells` on macOS and Linux. The **⌄** button by the panel's **+**
