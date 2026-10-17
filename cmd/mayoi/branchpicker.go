@@ -27,6 +27,9 @@ type branchPicker struct {
 	results  []workspace.Match
 	shown    string // the query the results are of
 	stale    bool
+	// deleting has the box choose a branch to delete rather than switch
+	// to: the branch checked out is left out, and no branch is created.
+	deleting bool
 }
 
 // branchNames are the names of branches, local and of remotes.
@@ -49,13 +52,19 @@ func (ns branchNames) has(name string) bool {
 
 // openBranchPicker shows the box of the branches, reading them in the
 // background.
-func (a *app) openBranchPicker() {
+func (a *app) openBranchPicker() { a.openBranchBox(false) }
+
+// openDeleteBranchPicker shows the box of the branches to choose one to
+// delete, local or of a remote.
+func (a *app) openDeleteBranchPicker() { a.openBranchBox(true) }
+
+func (a *app) openBranchBox(deleting bool) {
 	r := a.git.repo
 	if r == nil {
 		return
 	}
 	b := &a.branches
-	*b = branchPicker{open: true, loading: true}
+	*b = branchPicker{open: true, loading: true, deleting: deleting}
 	go func() {
 		bs, err := r.BranchList()
 		a.post(func() {
@@ -79,8 +88,11 @@ func (a *app) openBranchPicker() {
 				_, name, _ := strings.Cut(br.Name, "/")
 				return br.Remote && local[name]
 			})
-			// The branch checked out comes first.
+			// The branch checked out comes first, or, to delete, not at all.
 			cur := a.branch()
+			if b.deleting {
+				b.branches = slices.DeleteFunc(b.branches, func(br git.Branch) bool { return !br.Remote && br.Name == cur })
+			}
 			current := func(br git.Branch) int { return btoi(!br.Remote && br.Name == cur) }
 			slices.SortStableFunc(b.branches, func(x, y git.Branch) int { return current(y) - current(x) })
 			b.names = make(branchNames, len(b.branches))
@@ -115,7 +127,7 @@ func (a *app) branchChoices() []branchChoice {
 	for i := range b.results {
 		out = append(out, branchChoice{at: i})
 	}
-	if name := strings.TrimSpace(b.query); name != "" && !b.loading && validBranch(name) && !b.names.has(name) {
+	if name := strings.TrimSpace(b.query); name != "" && !b.loading && !b.deleting && validBranch(name) && !b.names.has(name) {
 		out = append(out, branchChoice{create: name})
 	}
 	return out
@@ -141,6 +153,10 @@ func (a *app) chooseBranch(ch branchChoice) {
 	}
 	br := b.branches[b.results[ch.at].Index]
 	a.closeBranchPicker()
+	if b.deleting {
+		a.deleteBranchOf(br)
+		return
+	}
 	name := br.Name
 	if br.Remote {
 		// Git makes the local branch that tracks it, of the same name.
@@ -148,6 +164,16 @@ func (a *app) chooseBranch(ch branchChoice) {
 	}
 	if name != a.branch() {
 		a.switchBranch(name, false)
+	}
+}
+
+// deleteBranchOf asks before deleting a branch of the box: a local one, or
+// one of a remote on the remote.
+func (a *app) deleteBranchOf(br git.Branch) {
+	if br.Remote {
+		a.askDeleteRemoteBranch(br.Name)
+	} else {
+		a.askDeleteBranch(br.Name)
 	}
 }
 
@@ -170,16 +196,20 @@ func (a *app) branchPickerView(c *ui.Context) {
 		b.shown, b.stale, b.sel = b.query, false, 0
 	}
 	choices := a.branchChoices()
+	title, placeholder, footer := "Switch Branch", "Switch to a branch, or type a name to create one", "Type a new name to create a branch"
+	if b.deleting {
+		title, placeholder, footer = "Delete Branch", "Choose a branch to delete", "Remote branches are deleted on their remote"
+	}
 	ui.Overlay(c, func() {
 		back := a.dialogBack(c, "branches")
 		back.Children(func() {
 			box := a.floating(c, ui.Column(c).Width(560).MaxWidthPercent(92).Margin(titleBarH+8, 0, 0, 0).Radius(10), true).Clip().
-				Role(ui.RoleDialog).Label("Switch Branch")
+				Role(ui.RoleDialog).Label(title)
 			box.Children(func() {
 				ui.Row(c).Padding(10, 14).Gap(10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(p.border).Children(func() {
 					ui.Icon(c, iconBranch).FontSize(15).TextColor(p.muted)
 					in := a.textKeys(ui.TextInputBase(c.Key("branch-input"), &b.query)).Grow(1).FontSize(14).AutoFocus().
-						Placeholder("Switch to a branch, or type a name to create one").Label("Switch Branch")
+						Placeholder(placeholder).Label(title)
 					if in.Shortcut(0, ui.KeyDown) {
 						b.sel, b.moved = min(b.sel+1, len(choices)-1), true
 					}
@@ -203,7 +233,11 @@ func (a *app) branchPickerView(c *ui.Context) {
 					ui.Text(c, "No matching branches").FontSize(13).TextColor(p.muted).Padding(12, 16)
 				}
 				b.moved = false
-				a.quickFooter(c, false, "switch", "Type a new name to create a branch", false)
+				action := "switch"
+				if b.deleting {
+					action = "delete"
+				}
+				a.quickFooter(c, false, action, footer, false)
 			})
 			if box.PressedOutside() || back.OverlayShortcut(0, ui.KeyEscape) {
 				a.closeBranchPicker()
@@ -239,6 +273,9 @@ func (a *app) branchRow(c *ui.Context, ch branchChoice, i int) {
 	}
 	if row.Clicked() {
 		a.post(func() { a.chooseBranch(ch) })
+	}
+	if ch.create == "" {
+		row.ContextMenu(func(m *ui.Menu) { a.branchRowMenu(m, br) })
 	}
 	row.Children(func() {
 		if ch.create != "" {
@@ -283,4 +320,17 @@ func (a *app) branchRow(c *ui.Context, ch branchChoice, i int) {
 			ui.Text(c, shortAgo(br.Time, time.Now())).FontSize(11.5).TextColor(p.faint).SingleLine().Shrink(0)
 		}
 	})
+}
+
+// branchRowMenu is the menu of a branch of the box: renaming a local
+// branch, and deleting any but the one checked out.
+func (a *app) branchRowMenu(m *ui.Menu, br git.Branch) {
+	busy := a.git.busy != ""
+	current := !br.Remote && br.Name == a.branch()
+	if !br.Remote && m.Item("Rename Branch…").Disabled(busy).Chosen() {
+		a.post(func() { a.closeBranchPicker(); a.askRenameBranch(br.Name) })
+	}
+	if m.Item("Delete Branch…").Disabled(busy || current).Chosen() {
+		a.post(func() { a.closeBranchPicker(); a.deleteBranchOf(br) })
+	}
 }

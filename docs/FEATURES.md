@@ -22,6 +22,8 @@ pressing Enter on it, or dragging it to another column keeps it open. A file alr
 has its own preview tab, which comes back as one at the next start. A commit clicked in source control opens in the
 same preview tab.
 
+A middle click on a tab closes it, the tab shown too, as in VS Code.
+
 ⇧⌘T reopens the last tab you closed, in its column and place, with its caret and scroll position. Press it again for
 the one before. Files and terminals both come back, a terminal as a new shell in the folder it started in. Opening or
 closing a folder forgets the tabs closed.
@@ -198,6 +200,26 @@ Not here, the check belongs in the section before.
 A comment follows its lines as the file changes. When they are no longer in the file, it says it is outdated, and
 keeps the lines as they were. Comments last until MyCode quits.
 
+### Merge conflicts
+
+A file Git says is in conflict shows each block of conflict markers tinted: the current side in green, the incoming
+side in the accent color, and a common ancestor's section, as diff3 writes it, faint. On the `<<<<<<<` line of each,
+**Accept Current**, **Accept Incoming** and **Accept Both** resolve it, as a step of undo. The **Git → Merge
+Conflicts** menu and the command palette have them for the conflict at the caret, **Accept All Current Changes** and
+**Accept All Incoming Changes** for the whole file, and **Next Conflict** and **Previous Conflict**; they take VS
+Code's `merge-conflict.*` names in `keybindings.json`. Once the last conflict of a file is resolved, a toast offers to
+**Stage** it, saving it first.
+
+### Stash
+
+**Git → Stash**, the **Stash** submenu of source control's **⋯** menu and the command palette put the changes in the
+stash, with a message or none, and the files Git does not track too with **Stash (Include Untracked)…**; the toast's
+**Pop** brings them back. **Apply Latest Stash** and **Pop Latest Stash** bring the last back, keeping it or not.
+**Apply Stash…**, **Pop Stash…**, **View Stash…** and **Drop Stash…** open a box of the stash's entries, found by
+message, each with a menu of all four: viewing shows an entry's changes in a tab, as a commit's, and dropping asks
+first. Changes staged when stashed are staged again. When they clash with the work tree's, the files are left in
+conflict to resolve, and the entry is kept.
+
 ### Branches and remotes
 
 The branch in the status bar shows how far it is ahead of its upstream (↑) and behind it (↓). Click it to switch
@@ -208,7 +230,19 @@ of the branches, local and of the remotes, the one checked out first and then th
 subject of its last commit and how long ago it was made. Type to find one by name, or type a new name to create a branch
 from the one checked out. Choosing a remote's branch checks out a local branch that tracks it.
 
-Pull only fast-forwards. Push sets the upstream the first time. Git never prompts for a password inside MyCode: it uses
+**Rename Branch…** renames the branch checked out, from the status bar's menu, the **Git** menu or the command palette;
+a branch that tracked an upstream stops tracking it, so the next push publishes it under its new name. **Delete
+Branch…** opens the same box to choose a branch to delete, leaving out the one checked out: a remote's branch is deleted
+on its remote. Deleting asks first, offers to delete the branch's upstream with it, asks again when its commits are
+merged nowhere, and the toast's **Undo** brings the branch back at its commit. A branch's menu in the box, and a
+commit's menu in **COMMITS** for the branches at it, rename and delete them too.
+
+Pull fast-forwards. When the branch and its upstream have diverged, it asks to **Pull (Rebase)** or **Pull (Merge)**
+instead, which are also in the menus and the command palette, and put the work tree's changes aside while they run.
+Push sets the upstream the first time. When the remote rejects a push, as after an amend or a rebase, MyCode offers to
+pull or to **Force Push**, which uses `--force-with-lease`, so commits pushed there since the last fetch are not lost;
+**Force Push…** is in the menus too. **Sync** pulls then pushes, and is the button of a clean work tree that is both
+ahead of its upstream and behind it. Git never prompts for a password inside MyCode: it uses
 your SSH agent and credential helper, and if those fail, the error says to run the command once in the terminal.
 
 ## Image viewer

@@ -77,6 +77,12 @@ func (a *app) tabStrip(c *ui.Context, col *column) {
 					if tab.DoubleClicked() {
 						a.keepTab(t)
 					}
+					// The middle button closes the tab, the one shown too, as in
+					// VS Code: it takes the press, so the tab is not shown first,
+					// and closes it as the button comes up.
+					tab.HandleInput(func(ev ui.InputEvent) bool {
+						return a.middleClose(ev, t)
+					})
 					if active && col.revealed != t.id {
 						// Bring the tab shown into view, once as it is chosen.
 						tab.ScrollIntoView()
@@ -165,6 +171,25 @@ func (a *app) tabStrip(c *ui.Context, col *column) {
 		// may go with its last tab.
 		a.post(func() { a.closeTab(closing, nil) })
 	}
+}
+
+// middleClose closes t on a click of the middle button, and reports
+// whether it took ev: the middle button's press and release, which no
+// other part of the tab uses.
+func (a *app) middleClose(ev ui.InputEvent, t *colTab) bool {
+	if ev.Button != 2 {
+		return false
+	}
+	switch ev.Kind {
+	case ui.InputPointerDown:
+		return true
+	case ui.InputPointerUp:
+		// After the frame, which may be drawing the columns: the column
+		// may go with its last tab.
+		a.post(func() { a.closeTab(t, nil) })
+		return true
+	}
+	return false
 }
 
 // tabMenu is the menu of a tab.

@@ -288,6 +288,7 @@ func (a *app) editorView(c *ui.Context, d *editor) {
 		}
 		matches := a.visibleMatches(d, first, last)
 		deco := a.decorate(d, snap, first, last)
+		conflicts := a.editorConflicts(d)
 		d.git.Refresh(d.path, d.buf.Snapshot(), a.post)
 		marks := d.git.Lines
 		gitRuns := d.gitRuns()
@@ -332,6 +333,12 @@ func (a *app) editorView(c *ui.Context, d *editor) {
 		}
 		area.Draw(func(pt *ui.Painter, r ui.Rect) {
 			rowsAt(r)
+			// The sides of each conflict, tinted under the caret's line.
+			a.conflictBands(conflicts, first, last, func(from, to int, col ui.Color) {
+				for i := max(from, first); i <= min(to, last); i++ {
+					pt.Fill(ui.Rect{X: r.X, Y: lineY(r, i), W: r.W, H: lineHeight(i)}, col, 0)
+				}
+			})
 			if y := lineY(r, caretLine); !selecting && y+lineH > r.Y && y < r.Y+r.H {
 				pt.Fill(ui.Rect{X: r.X, Y: y, W: r.W, H: lineHeight(caretLine)}, p.line, 0)
 			}

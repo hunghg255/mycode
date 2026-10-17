@@ -168,6 +168,7 @@ type app struct {
 	palette    []paletteEntry    // the commands of the command palette, made as it first opens
 	hints      map[string]string // the keys of the commands, as tooltips show them
 	branches   branchPicker      // the box that switches branches
+	stashes    stashPicker       // the box of the stash's entries
 	recents    recentPicker      // the box of the recent folders
 	find       findState
 	inFiles    searchState // search in the files, of the sidebar

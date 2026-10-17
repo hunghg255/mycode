@@ -5,6 +5,20 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Merge conflicts in the editor: each block of markers is tinted, with **Accept Current**, **Accept Incoming** and
+  **Accept Both** on its first line, commands for the conflict at the caret or the whole file, **Next Conflict** and
+  **Previous Conflict**, and a toast that stages the file once its last conflict is resolved.
+- Stash: **Stash…** (with untracked files or not), **Apply** or **Pop Latest Stash**, and a box of the stash's
+  entries to apply, pop, view or drop, from **Git → Stash**, source control's **⋯** menu and the command palette.
+- **Rename Branch…** and **Delete Branch…**, in the status bar's menu, the **Git** menu, the command palette, a
+  branch's menu in Switch Branch and a commit's menu in COMMITS. Deleting asks first, can delete the upstream too or
+  a remote's branch on its remote, asks again for a branch not merged, and has an **Undo**.
+- A middle click on a tab closes it, the tab shown too.
+- **Pull (Rebase)** and **Pull (Merge)**: a pull of a branch that has diverged from its upstream asks which, instead
+  of failing.
+- **Force Push…**, with `--force-with-lease`, and offered when the remote rejects a push, as after an amend.
+- **Sync** pulls then pushes, from the menus, the command palette, and the button of a clean work tree that is both
+  ahead and behind.
 - File and folder icons from the Material Icon Theme, as in VS Code, in the explorer, tabs, breadcrumbs,
   quick open, search and source control. The Matrix theme keeps its one-shade icons.
 - **File Icon Theme** (View menu, Manage menu, command palette, or the `iconTheme` setting) switches between the

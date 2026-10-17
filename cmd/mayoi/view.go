@@ -128,6 +128,7 @@ func (a *app) view(c *ui.Context) {
 	})
 	a.quickOpenView(c)
 	a.branchPickerView(c)
+	a.stashPickerView(c)
 	a.recentPickerView(c)
 	a.promptView(c)
 	a.confirmView(c)
@@ -442,6 +443,7 @@ func (a *app) columnView(c *ui.Context, col *column) {
 				default:
 					a.editorView(c, shown.ed)
 					a.hunkPeekView(c, shown.ed)
+					a.conflictActionsView(c, shown.ed)
 					a.reviewBoxView(c, shown.ed)
 					if col == a.column() {
 						a.findView(c, shown.ed)

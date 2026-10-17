@@ -670,11 +670,11 @@ func (a *app) scmClean(c *ui.Context) {
 		case st.Upstream == "" && len(g.remotes) > 0:
 			button(iconPush, "Publish Branch", true, a.push)
 		case st.Upstream == "":
+		case st.Behind > 0 && st.Ahead > 0:
+			// Pull, then push: Sync asks how when the two have diverged.
+			button(iconPull, fmt.Sprintf("Sync (%d↓ %d↑)", st.Behind, st.Ahead), true, a.sync)
 		case st.Behind > 0:
 			button(iconPull, fmt.Sprintf("Pull %s", plural(st.Behind, "Commit")), true, a.pull)
-			if st.Ahead > 0 {
-				button(iconPush, fmt.Sprintf("Push %s", plural(st.Ahead, "Commit")), false, a.push)
-			}
 		case st.Ahead > 0:
 			button(iconPush, fmt.Sprintf("Push %s", plural(st.Ahead, "Commit")), true, a.push)
 		}
@@ -1187,10 +1187,42 @@ func (a *app) scmCommitMenu(m *ui.Menu, cm *git.Commit, head bool, action *func(
 			a.services.WriteClipboard(name)
 		}
 	}
+	a.refMenu(m, cm.Refs, busy, action)
 	if head {
 		m.Separator()
 		if m.Item("Undo Last Commit").Disabled(moving).Chosen() {
 			*action = a.undoCommit
+		}
+	}
+}
+
+// refMenu has the items of a commit's menu that rename or delete its
+// branches: local ones, all but the one checked out for deleting, and
+// those of remotes, on the remote.
+func (a *app) refMenu(m *ui.Menu, refs []git.Ref, busy bool, action *func()) {
+	first := true
+	sep := func() {
+		if first {
+			m.Separator()
+			first = false
+		}
+	}
+	for _, r := range refs {
+		name := r.Name
+		switch r.Kind {
+		case git.RefBranch:
+			sep()
+			if m.Item(fmt.Sprintf("Rename Branch “%s”…", name)).Disabled(busy).Chosen() {
+				*action = func() { a.askRenameBranch(name) }
+			}
+			if m.Item(fmt.Sprintf("Delete Branch “%s”…", name)).Disabled(busy || name == a.branch()).Chosen() {
+				*action = func() { a.askDeleteBranch(name) }
+			}
+		case git.RefRemote:
+			sep()
+			if m.Item(fmt.Sprintf("Delete Remote Branch “%s”…", name)).Disabled(busy).Chosen() {
+				*action = func() { a.askDeleteRemoteBranch(name) }
+			}
 		}
 	}
 }
@@ -1388,6 +1420,9 @@ func (a *app) scmMenu(m *ui.Menu) {
 	if m.Item("Push").Disabled(g.busy != "").Chosen() {
 		a.post(a.push)
 	}
+	a.remoteMoreMenu(m)
+	m.Separator()
+	m.Submenu("Stash", a.stashMenu)
 	m.Separator()
 	if m.Item("View as Tree").Checked(a.settings.ScmTree).Chosen() {
 		a.post(func() {

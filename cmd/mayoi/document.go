@@ -73,6 +73,9 @@ type editor struct {
 	win        *lineWindow
 	winVersion uint64
 	colors     colorCache
+	// conflicts are the blocks of conflict markers of the text, while Git
+	// says the file is in conflict.
+	conflicts conflictCache
 	// measured is the text and the lines in view whose widths the editor
 	// last took into widest.
 	measured struct {

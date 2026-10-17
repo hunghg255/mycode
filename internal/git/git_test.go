@@ -609,3 +609,127 @@ func TestRevertReset(t *testing.T) {
 		t.Errorf("soft: %v", st.Entries)
 	}
 }
+
+func TestRenameAndDeleteBranches(t *testing.T) {
+	r, git := repo(t)
+	remote := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	git("remote", "add", "origin", remote)
+	git("branch", "feature")
+	git("push", "-q", "-u", "origin", "feature")
+	hash, upstream, err := r.BranchTip("feature")
+	if err != nil || hash != r.Head() || upstream != "origin/feature" {
+		t.Fatalf("tip %q upstream %q: %v", hash, upstream, err)
+	}
+	if err := r.RenameBranch("feature", "topic"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.UnsetUpstream("topic"); err != nil {
+		t.Fatal(err)
+	}
+	if bs, _ := r.Branches(); !slices.Equal(bs, []string{"main", "topic"}) {
+		t.Fatalf("branches %v", bs)
+	}
+	if _, up, _ := r.BranchTip("topic"); up != "" {
+		t.Fatalf("upstream after unset: %q", up)
+	}
+	// A branch with a commit merged nowhere goes only by force.
+	git("switch", "-q", "topic")
+	write(t, r.Root, "a.txt", "topic\n")
+	git("commit", "-qam", "topic")
+	git("switch", "-q", "main")
+	err = r.DeleteBranch("topic", false)
+	if !NotMerged(err) {
+		t.Fatalf("delete unmerged: %v", err)
+	}
+	if err := r.DeleteBranch("topic", true); err != nil {
+		t.Fatal(err)
+	}
+	if bs, _ := r.Branches(); !slices.Equal(bs, []string{"main"}) {
+		t.Fatalf("branches after delete %v", bs)
+	}
+	// The remote's branch goes on the remote.
+	if err := r.DeleteRemoteBranch("origin/feature"); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := exec.Command("git", "-C", remote, "branch", "--list").Output(); strings.Contains(string(out), "feature") {
+		t.Fatalf("remote still has: %s", out)
+	}
+	if err := r.DeleteRemoteBranch("nobranch"); err == nil {
+		t.Fatal("deleting a name of no remote's branch")
+	}
+}
+
+func TestStash(t *testing.T) {
+	r, _ := repo(t)
+	if ss, err := r.StashList(); err != nil || len(ss) != 0 {
+		t.Fatalf("empty stash: %v %v", ss, err)
+	}
+	write(t, r.Root, "a.txt", "stashed\n")
+	write(t, r.Root, "new.txt", "untracked\n")
+	r.Stage(filepath.Join(r.Root, "a.txt"))
+	if err := r.StashPush("first try", false); err != nil {
+		t.Fatal(err)
+	}
+	// Without untracked, the new file stays.
+	if _, err := os.Stat(filepath.Join(r.Root, "new.txt")); err != nil {
+		t.Fatal("untracked file stashed")
+	}
+	if err := r.StashPush("", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(r.Root, "new.txt")); err == nil {
+		t.Fatal("untracked file not stashed")
+	}
+	ss, err := r.StashList()
+	if err != nil || len(ss) != 2 {
+		t.Fatalf("stash %v %v", ss, err)
+	}
+	if ss[0].Name != "stash@{0}" || ss[1].Name != "stash@{1}" || ss[1].Message() != "first try" || ss[0].Hash == "" || ss[0].Time.IsZero() {
+		t.Fatalf("entries %+v", ss)
+	}
+	// Pop the untracked one, drop it again; apply the first, staged as it was.
+	if c, err := r.StashApply("stash@{0}", true); err != nil || c {
+		t.Fatalf("pop: %v %v", c, err)
+	}
+	// Without the \r Git may write on Windows.
+	if b, _ := os.ReadFile(filepath.Join(r.Root, "new.txt")); strings.TrimSpace(string(b)) != "untracked" {
+		t.Fatalf("popped new.txt %q", b)
+	}
+	if ss, _ = r.StashList(); len(ss) != 1 {
+		t.Fatalf("after pop %v", ss)
+	}
+	if c, err := r.StashApply("stash@{0}", false); err != nil || c {
+		t.Fatalf("apply: %v %v", c, err)
+	}
+	st, _ := r.Status()
+	staged := false
+	for _, e := range st.Entries {
+		if filepath.Base(e.Path) == "a.txt" && e.Staged() {
+			staged = true
+		}
+	}
+	if !staged {
+		t.Fatalf("a.txt not staged again: %+v", st.Entries)
+	}
+	if err := r.StashDrop("stash@{0}"); err != nil {
+		t.Fatal(err)
+	}
+	// A stash whose changes clash with the work tree's conflicts.
+	r.Unstage(filepath.Join(r.Root, "a.txt"))
+	if err := r.StashPush("clash", false); err != nil {
+		t.Fatal(err)
+	}
+	write(t, r.Root, "a.txt", "other\n")
+	r.Stage(filepath.Join(r.Root, "a.txt"))
+	r.Commit("other", false)
+	c, err := r.StashApply("stash@{0}", true)
+	if err != nil || !c {
+		t.Fatalf("clashing pop: conflicted %v, %v", c, err)
+	}
+	if ss, _ = r.StashList(); len(ss) != 1 {
+		t.Fatal("a pop that conflicts dropped the entry")
+	}
+}

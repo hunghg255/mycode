@@ -373,6 +373,93 @@ func TestPushPullFetch(t *testing.T) {
 	}
 }
 
+// TestDivergedPullAndForcePush: a pull of a branch that has diverged asks
+// to rebase or merge, a push the remote rejects offers to force it, and
+// Sync pulls then pushes.
+func TestDivergedPullAndForcePush(t *testing.T) {
+	hs := newHarness(t, true)
+	git := hs.gitRepo()
+	a := hs.a
+	remote := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	git("remote", "add", "origin", remote)
+	a.push()
+	hs.settleGit()
+	other := t.TempDir()
+	if out, err := exec.Command("git", "clone", "-q", "-b", "main", remote, other).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	inOther := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", other, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatal(err, string(out))
+		}
+	}
+	remoteHead := func() string {
+		out, _ := exec.Command("git", "-C", remote, "log", "--format=%s", "-1", "main").Output()
+		return strings.TrimSpace(string(out))
+	}
+	// A commit there, and one here: they diverge.
+	os.WriteFile(other+"/other.txt", []byte("other\n"), 0o644)
+	inOther("add", "other.txt")
+	inOther("commit", "-qm", "other")
+	inOther("push", "-q")
+	os.WriteFile(hs.path("mine.txt"), []byte("mine\n"), 0o644)
+	git("add", "mine.txt")
+	git("commit", "-qm", "mine")
+	a.fetch()
+	hs.settleGit()
+	if st := a.git.status; st.Ahead != 1 || st.Behind != 1 {
+		t.Fatalf("ahead %d behind %d", st.Ahead, st.Behind)
+	}
+	// The push is rejected, and offers to pull or force it.
+	a.push()
+	hs.settleGit()
+	if a.confirm == nil || a.confirm.ok != "Force Push" || a.confirm.alternate != "Pull" {
+		t.Fatalf("rejected push: %+v", a.confirm)
+	}
+	a.confirm = nil
+	// Sync: the pull asks how, the rebase goes on to the push.
+	a.sync()
+	hs.settleGit()
+	if a.confirm == nil || a.confirm.ok != "Pull (Rebase)" || a.confirm.alternate != "Pull (Merge)" {
+		t.Fatalf("diverged pull: %+v", a.confirm)
+	}
+	cf := a.confirm
+	a.confirm = nil
+	cf.run()
+	for range 3 {
+		hs.settleGit()
+	}
+	if st := a.git.status; st.Ahead != 0 || st.Behind != 0 {
+		t.Fatalf("after sync: ahead %d behind %d", st.Ahead, st.Behind)
+	}
+	if got := remoteHead(); got != "mine" {
+		t.Fatalf("remote at %q after sync", got)
+	}
+	if _, err := os.Stat(hs.path("other.txt")); err != nil {
+		t.Fatalf("other's commit not pulled: %v", err)
+	}
+	// An amend of a pushed commit: Force Push replaces it.
+	git("commit", "-q", "--amend", "-m", "mine, amended")
+	a.fetch()
+	hs.settleGit()
+	a.askForcePush(false)
+	if a.confirm == nil || !a.confirm.danger {
+		t.Fatalf("force push: %+v", a.confirm)
+	}
+	cf = a.confirm
+	a.confirm = nil
+	cf.run()
+	hs.settleGit()
+	if got := remoteHead(); got != "mine, amended" {
+		t.Fatalf("remote at %q after force push", got)
+	}
+}
+
 func TestRenamesAndDiscardingOpenFiles(t *testing.T) {
 	hs := newHarness(t, true)
 	git := hs.gitRepo()
@@ -1365,5 +1452,210 @@ func TestCommitCardWraps(t *testing.T) {
 	hs.settle()
 	if got := tt.Clipboard(); got != hash {
 		t.Errorf("clipboard %q, not the hash %q", got, hash)
+	}
+}
+
+// TestRenameAndDeleteBranch: a branch is renamed from a prompt, deleted
+// once asked, by force when it is not merged, and brought back by the
+// toast's Undo; the box to delete leaves out the branch checked out.
+func TestRenameAndDeleteBranch(t *testing.T) {
+	hs := newHarness(t, true)
+	git := hs.gitRepo()
+	a := hs.a
+	git("branch", "feature")
+	hs.settleGit()
+	branches := func() []string {
+		out, _ := exec.Command("git", "-C", hs.root, "branch", "--format=%(refname:short)").Output()
+		return strings.Fields(string(out))
+	}
+	waitConfirm := func() *confirm {
+		t.Helper()
+		for range 200 {
+			if a.confirm != nil {
+				cf := a.confirm
+				a.confirm = nil
+				return cf
+			}
+			hs.settle()
+		}
+		t.Fatal("no dialog")
+		return nil
+	}
+	// Rename.
+	a.askRenameBranch("feature")
+	if a.prompt == nil || a.prompt.value != "feature" {
+		t.Fatalf("rename prompt: %+v", a.prompt)
+	}
+	if msg := a.prompt.done("main"); msg == "" {
+		t.Fatal("renamed onto an existing branch")
+	}
+	if msg := a.prompt.done("topic"); msg != "" {
+		t.Fatal(msg)
+	}
+	a.prompt = nil
+	hs.settleGit()
+	if got := branches(); !slices.Equal(got, []string{"main", "topic"}) {
+		t.Fatalf("after rename: %v", got)
+	}
+	// The branch checked out cannot go, nor shows in the box to delete.
+	a.errors = nil
+	a.askDeleteBranch("main")
+	if a.confirm != nil {
+		t.Fatal("asked to delete the branch checked out")
+	}
+	a.openDeleteBranchPicker()
+	for range 200 {
+		if !a.branches.loading {
+			break
+		}
+		hs.settle()
+	}
+	if names := a.branches.names; slices.Contains(names, "main") || !slices.Contains(names, "topic") {
+		t.Fatalf("box to delete has %v", names)
+	}
+	a.closeBranchPicker()
+	// A commit of its own: deleting asks again, and forces it.
+	git("switch", "-q", "topic")
+	os.WriteFile(hs.path("topic.txt"), []byte("topic\n"), 0o644)
+	git("add", "topic.txt")
+	git("commit", "-qm", "topic")
+	git("switch", "-q", "main")
+	hs.settleGit()
+	tip := strings.TrimSpace(string(must(exec.Command("git", "-C", hs.root, "rev-parse", "topic").Output())))
+	a.askDeleteBranch("topic")
+	cf := waitConfirm()
+	if cf.ok != "Delete" || !cf.danger || cf.alternate != "" {
+		t.Fatalf("delete dialog: %+v", cf)
+	}
+	cf.run()
+	hs.settleGit()
+	cf = waitConfirm()
+	if cf.ok != "Delete Anyway" {
+		t.Fatalf("not merged dialog: %+v", cf)
+	}
+	cf.run()
+	hs.settleGit()
+	if got := branches(); !slices.Equal(got, []string{"main"}) {
+		t.Fatalf("after delete: %v", got)
+	}
+	// Undo, in the toast, brings it back at its commit.
+	hs.tt.Frame()
+	if err := hs.tt.Click("Undo"); err != nil {
+		t.Fatalf("%v: %q", err, hs.tt.Texts())
+	}
+	hs.settleGit()
+	if out, _ := exec.Command("git", "-C", hs.root, "rev-parse", "topic").Output(); strings.TrimSpace(string(out)) != tip {
+		t.Fatalf("restored at %q, want %q", out, tip)
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+// TestStashChanges: changes go in the stash from a prompt, the toast pops
+// them back, the box lists the entries and applies, views and drops them.
+func TestStashChanges(t *testing.T) {
+	hs := newHarness(t, true)
+	hs.gitRepo()
+	a := hs.a
+	readme := func() string {
+		b, _ := os.ReadFile(hs.path("README.md"))
+		return strings.ReplaceAll(string(b), "\r", "")
+	}
+	stashCount := func() int {
+		out, _ := exec.Command("git", "-C", hs.root, "stash", "list").Output()
+		return len(strings.Fields(strings.ReplaceAll(string(out), " ", "_")))
+	}
+	orig := readme()
+	// Nothing to stash.
+	a.askStash(false)
+	if a.prompt != nil {
+		t.Fatal("asked to stash a clean work tree")
+	}
+	os.WriteFile(hs.path("README.md"), []byte("# Stashed\n"), 0o644)
+	hs.settleGit()
+	a.askStash(false)
+	if a.prompt == nil {
+		t.Fatal("no prompt")
+	}
+	a.prompt.done("readme work")
+	a.prompt = nil
+	hs.settleGit()
+	if got := readme(); got != orig || stashCount() != 1 {
+		t.Fatalf("after stash: %q, %d entries", got, stashCount())
+	}
+	// The toast pops it back.
+	hs.tt.Frame()
+	if err := hs.tt.Click("Pop"); err != nil {
+		t.Fatalf("%v: %q", err, hs.tt.Texts())
+	}
+	hs.settleGit()
+	if got := readme(); got != "# Stashed\n" || stashCount() != 0 {
+		t.Fatalf("after pop: %q, %d entries", got, stashCount())
+	}
+	// Stash again; the box applies it, keeping the entry.
+	a.stashChanges("again", false)
+	hs.settleGit()
+	a.openStashPicker(stashApply)
+	for range 200 {
+		if !a.stashes.loading {
+			break
+		}
+		hs.settle()
+	}
+	hs.tt.Frame()
+	if !hs.tt.HasText("again") || !hs.tt.HasText("stash@{0}") {
+		t.Fatalf("box: %q", hs.tt.Texts())
+	}
+	hs.key(0, ui.KeyEnter)
+	hs.settleGit()
+	if got := readme(); got != "# Stashed\n" || stashCount() != 1 || a.stashes.open {
+		t.Fatalf("after apply: %q, %d entries, open %v", got, stashCount(), a.stashes.open)
+	}
+	// Viewing it opens its changes in a tab.
+	ss, _ := a.git.repo.StashList()
+	a.viewStash(ss[0])
+	for range 200 {
+		if col, _ := a.commitTab(ss[0].Hash); col != nil {
+			break
+		}
+		hs.settle()
+	}
+	if col, _ := a.commitTab(ss[0].Hash); col == nil {
+		t.Fatal("no tab of the stash's changes")
+	}
+	// Dropping asks first.
+	a.openStashPicker(stashDrop)
+	for range 200 {
+		if !a.stashes.loading {
+			break
+		}
+		hs.settle()
+	}
+	a.chooseStash(0)
+	if a.confirm == nil || !a.confirm.danger {
+		t.Fatalf("drop: %+v", a.confirm)
+	}
+	cf := a.confirm
+	a.confirm = nil
+	cf.run()
+	hs.settleGit()
+	if stashCount() != 0 {
+		t.Fatalf("after drop: %d entries", stashCount())
+	}
+	// The box of an empty stash does not open.
+	a.openStashPicker(stashPop)
+	for range 200 {
+		if !a.stashes.loading {
+			break
+		}
+		hs.settle()
+	}
+	if a.stashes.open {
+		t.Fatal("box of an empty stash")
 	}
 }

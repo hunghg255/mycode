@@ -658,6 +658,147 @@ func (r *Repo) CreateBranch(name, at string) error {
 	return err
 }
 
+// Stash is an entry of the stash.
+type Stash struct {
+	Name    string // as "stash@{0}", the latest
+	Hash    string
+	Time    time.Time
+	Subject string // as "On main: message", or "WIP on main: abc1234 subject"
+}
+
+// Message is what the stash was made with: its message, without where it
+// was made, as "message" of "On main: message".
+func (s Stash) Message() string {
+	if _, msg, ok := strings.Cut(s.Subject, ": "); ok && (strings.HasPrefix(s.Subject, "On ") || strings.HasPrefix(s.Subject, "WIP on ")) {
+		return msg
+	}
+	return s.Subject
+}
+
+// StashPush puts the changes of the work tree and the index in the stash,
+// with message when it is set, and the files Git does not track with
+// untracked.
+func (r *Repo) StashPush(message string, untracked bool) error {
+	args := []string{"stash", "push"}
+	if untracked {
+		args = append(args, "--include-untracked")
+	}
+	if message != "" {
+		args = append(args, "-m", message)
+	}
+	_, err := r.run(nil, args...)
+	return err
+}
+
+// StashList returns the entries of the stash, the latest first.
+func (r *Repo) StashList() ([]Stash, error) {
+	out, err := r.run(nil, "stash", "list", "--format=%gd%x1f%H%x1f%ct%x1f%gs")
+	if err != nil {
+		return nil, err
+	}
+	var ss []Stash
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.SplitN(line, "\x1f", 4)
+		if len(f) < 4 {
+			continue
+		}
+		s := Stash{Name: f[0], Hash: f[1], Subject: f[3]}
+		if t, err := strconv.ParseInt(f[2], 10, 64); err == nil {
+			s.Time = time.Unix(t, 0)
+		}
+		ss = append(ss, s)
+	}
+	return ss, nil
+}
+
+// StashApply puts the changes of a stash entry back in the work tree,
+// and those it staged back in the index, keeping the entry; with pop, the
+// entry goes once they are back. conflicted reports that they clashed
+// with the work tree's, leaving files in conflict, and the entry kept.
+func (r *Repo) StashApply(name string, pop bool) (conflicted bool, err error) {
+	cmd := "apply"
+	if pop {
+		cmd = "pop"
+	}
+	_, err = r.run(nil, "stash", cmd, "--index", name)
+	if err != nil && strings.Contains(err.Error(), "without --index") {
+		// The index has changes the stash's staged ones clash with:
+		// put them back in the work tree alone.
+		_, err = r.run(nil, "stash", cmd, name)
+	}
+	if err == nil {
+		return false, nil
+	}
+	if st, serr := r.Status(); serr == nil && slices.ContainsFunc(st.Entries, Entry.Conflicted) {
+		return true, nil
+	}
+	return false, err
+}
+
+// StashDrop deletes a stash entry.
+func (r *Repo) StashDrop(name string) error {
+	_, err := r.run(nil, "stash", "drop", name)
+	return err
+}
+
+// BranchTip returns the commit of a local branch, and its upstream, as
+// "origin/main", "" when it has none.
+func (r *Repo) BranchTip(name string) (hash, upstream string, err error) {
+	out, err := r.run(nil, "for-each-ref", "--format=%(objectname)%1f%(upstream:short)", "refs/heads/"+name)
+	if err != nil {
+		return "", "", err
+	}
+	line, _, _ := strings.Cut(string(out), "\n")
+	hash, upstream, _ = strings.Cut(line, "\x1f")
+	if hash == "" {
+		return "", "", fmt.Errorf("no branch %s", name)
+	}
+	return hash, strings.TrimSpace(upstream), nil
+}
+
+// DeleteBranch deletes a local branch: with force, even when its commits
+// are not merged into HEAD or its upstream.
+func (r *Repo) DeleteBranch(name string, force bool) error {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	_, err := r.run(nil, "branch", flag, "--", name)
+	return err
+}
+
+// DeleteRemoteBranch deletes a branch of a remote, named as "origin/main",
+// on the remote.
+func (r *Repo) DeleteRemoteBranch(name string) error {
+	remote, branch, ok := strings.Cut(name, "/")
+	if !ok || remote == "" || branch == "" {
+		return fmt.Errorf("%q names no branch of a remote", name)
+	}
+	_, err := r.run(nil, "push", remote, "--delete", branch)
+	return err
+}
+
+// RenameBranch renames a local branch. Its upstream, when it has one,
+// keeps its name.
+func (r *Repo) RenameBranch(old, name string) error {
+	_, err := r.run(nil, "branch", "-m", old, name)
+	return err
+}
+
+// UnsetUpstream has a local branch track no upstream, so that the next
+// push publishes it, as after a rename.
+func (r *Repo) UnsetUpstream(name string) error {
+	_, err := r.run(nil, "branch", "--unset-upstream", name)
+	return err
+}
+
+// NotMerged reports whether deleting a branch failed as its commits are
+// in no branch it was merged into, so that only a forced delete deletes it.
+func NotMerged(err error) bool {
+	var ge *Error
+	return errors.As(err, &ge) && strings.Contains(strings.ToLower(ge.Stderr), "not fully merged")
+}
+
 // CreateTag tags a commit: annotated with message, lightweight without.
 func (r *Repo) CreateTag(name, at, message string) error {
 	args := []string{"tag", name, at}
@@ -929,16 +1070,79 @@ func (r *Repo) Fetch() error {
 }
 
 // Pull merges the upstream's commits, when that is a fast-forward.
-func (r *Repo) Pull() error {
-	_, err := r.run(nil, "pull", "--ff-only")
+func (r *Repo) Pull() error { return r.PullWith(PullFastForward) }
+
+// PullMode is how a pull brings in the upstream's commits.
+type PullMode int
+
+const (
+	// PullFastForward only fast-forwards, and fails when the branch and
+	// its upstream have diverged.
+	PullFastForward PullMode = iota
+	// PullRebase makes the branch's own commits again on top of the
+	// upstream's.
+	PullRebase
+	// PullMerge merges the upstream into the branch, with a merge commit
+	// when they have diverged.
+	PullMerge
+)
+
+// PullWith pulls from the upstream in mode. A rebase or a merge puts the
+// changes of the work tree aside while it runs, and back after.
+func (r *Repo) PullWith(mode PullMode) error {
+	args := []string{"pull", "--ff-only"}
+	switch mode {
+	case PullRebase:
+		args = []string{"pull", "--rebase", "--autostash"}
+	case PullMerge:
+		args = []string{"pull", "--no-rebase", "--no-edit", "--autostash"}
+	}
+	_, err := r.run(nil, args...)
 	return err
+}
+
+// Diverged reports whether a pull failed as the branch and its upstream
+// have diverged, so that only a rebase or a merge brings the commits in.
+func Diverged(err error) bool {
+	var ge *Error
+	if !errors.As(err, &ge) {
+		return false
+	}
+	s := strings.ToLower(ge.Stderr)
+	return strings.Contains(s, "not possible to fast-forward") || strings.Contains(s, "diverging branches") ||
+		strings.Contains(s, "have diverged")
+}
+
+// Rejected reports whether a push failed as the remote has commits the
+// branch lacks: after an amend or a rebase, or a push from elsewhere.
+func Rejected(err error) bool {
+	var ge *Error
+	if !errors.As(err, &ge) {
+		return false
+	}
+	s := strings.ToLower(ge.Stderr)
+	return strings.Contains(s, "[rejected]") || strings.Contains(s, "non-fast-forward") ||
+		strings.Contains(s, "fetch first")
 }
 
 // Push pushes the branch to its upstream, or to a remote of the same name
 // that becomes its upstream when it has none.
-func (r *Repo) Push(branch string, hasUpstream bool) error {
+func (r *Repo) Push(branch string, hasUpstream bool) error { return r.push(branch, hasUpstream, false) }
+
+// ForcePush pushes the branch as Push does, replacing the remote's, but
+// only while the remote's is the one last fetched (--force-with-lease):
+// commits pushed there since are not lost.
+func (r *Repo) ForcePush(branch string, hasUpstream bool) error {
+	return r.push(branch, hasUpstream, true)
+}
+
+func (r *Repo) push(branch string, hasUpstream, force bool) error {
+	args := []string{"push"}
+	if force {
+		args = append(args, "--force-with-lease")
+	}
 	if hasUpstream {
-		_, err := r.run(nil, "push")
+		_, err := r.run(nil, args...)
 		return err
 	}
 	remotes, err := r.Remotes()
@@ -954,7 +1158,7 @@ func (r *Repo) Push(branch string, hasUpstream bool) error {
 			remote = rm
 		}
 	}
-	_, err = r.run(nil, "push", "-u", remote, branch)
+	_, err = r.run(nil, append(args, "-u", remote, branch)...)
 	return err
 }
 

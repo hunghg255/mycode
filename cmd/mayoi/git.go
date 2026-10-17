@@ -386,12 +386,22 @@ func (a *app) fetch() {
 }
 
 // pull brings in the upstream's commits, when the branch has none of its
-// own that it lacks.
-func (a *app) pull() {
-	pulled := 0
+// own that it lacks. When the two have diverged, it asks to rebase or
+// merge instead.
+func (a *app) pull() { a.pullThen(nil) }
+
+// pullThen pulls as pull does, then calls then, unless the pull failed
+// or stopped: after a rebase or a merge that the dialog of a divergence
+// starts too.
+func (a *app) pullThen(then func()) {
+	pulled, diverged := 0, false
 	a.gitDo("Pulling…", func(r *git.Repo) error {
 		before := r.Head()
 		if err := r.Pull(); err != nil {
+			if git.Diverged(err) {
+				diverged = true
+				return nil
+			}
 			return err
 		}
 		if before != "" {
@@ -399,16 +409,50 @@ func (a *app) pull() {
 		}
 		return nil
 	}, func() {
-		if pulled > 0 {
+		switch {
+		case diverged:
+			a.askDiverged(then)
+			return
+		case pulled > 0:
 			a.tell(note{message: "Pulled " + plural(pulled, "commit")})
-		} else {
+		case then == nil:
 			a.tell(note{message: "Already up to date"})
+		}
+		if then != nil {
+			then()
 		}
 	})
 }
 
+// askDiverged asks how to bring in the upstream's commits when the branch
+// has commits of its own that the upstream lacks: by a rebase, or a merge.
+func (a *app) askDiverged(then func()) {
+	st := a.git.status
+	branch, upstream := a.branch(), "its upstream"
+	if st != nil && st.Upstream != "" {
+		upstream = st.Upstream
+	}
+	a.confirm = &confirm{title: branch + " and " + upstream + " have diverged",
+		message: "Each has commits the other lacks. Rebase makes the commits of " + branch +
+			" again on top of " + upstream + "'s; Merge joins them in a merge commit.",
+		ok: "Pull (Rebase)", okShort: "Rebase", alternate: "Pull (Merge)", alternateShort: "Merge",
+		run:          func() { a.pullWith(git.PullRebase, then) },
+		runAlternate: func() { a.pullWith(git.PullMerge, then) }}
+}
+
+// pullWith pulls by a rebase or a merge, then calls then unless it
+// failed or stopped for conflicts, which it says how to go on from.
+func (a *app) pullWith(mode git.PullMode, then func()) {
+	op, busy, done := git.OpRebase, "Pulling (rebase)…", "Pulled and rebased "+a.branch()
+	if mode == git.PullMerge {
+		op, busy, done = git.OpMerge, "Pulling (merge)…", "Pulled and merged into "+a.branch()
+	}
+	a.runOpThen(op, busy, done, func(r *git.Repo) error { return r.PullWith(mode) }, then)
+}
+
 // push pushes the branch to its upstream, or to a remote, which becomes
-// its upstream.
+// its upstream. When the remote has commits the branch lacks, as after an
+// amend or a rebase, it offers to force the push.
 func (a *app) push() {
 	st := a.git.status
 	if st == nil || st.Branch == "" {
@@ -416,13 +460,79 @@ func (a *app) push() {
 		return
 	}
 	branch, upstream := st.Branch, st.Upstream != ""
-	a.gitDo("Pushing…", func(r *git.Repo) error { return r.Push(branch, upstream) }, func() {
-		if upstream {
+	rejected := false
+	a.gitDo("Pushing…", func(r *git.Repo) error {
+		err := r.Push(branch, upstream)
+		if err != nil && git.Rejected(err) {
+			rejected = true
+			return nil
+		}
+		return err
+	}, func() {
+		switch {
+		case rejected:
+			a.askForcePush(true)
+		case upstream:
 			a.tell(note{message: "Pushed " + branch + " to " + st.Upstream})
-		} else {
+		default:
 			a.tell(note{message: "Published " + branch})
 		}
 	})
+}
+
+// askForcePush asks before forcing the push of the branch, saying why the
+// push was rejected when it was.
+func (a *app) askForcePush(rejected bool) {
+	st := a.git.status
+	if st == nil || st.Branch == "" {
+		a.fail("Check out a branch to push.")
+		return
+	}
+	branch := st.Branch
+	remote := cmp.Or(st.Upstream, "the remote")
+	title := "Force push " + branch + "?"
+	msg := "The commits of " + remote + " that " + branch + " lacks are replaced by its own. " +
+		"It stops if " + remote + " has changed since the last fetch (--force-with-lease)."
+	if rejected {
+		title = "The push of " + branch + " was rejected"
+		msg = remote + " has commits that " + branch + " lacks, as after an amend or a rebase. Pull to bring " +
+			"them in, or force the push to replace them; it stops if " + remote +
+			" has changed since the last fetch (--force-with-lease)."
+	}
+	cf := &confirm{title: title, message: msg, ok: "Force Push", danger: true, run: a.forcePush}
+	if rejected {
+		cf.alternate, cf.runAlternate = "Pull", a.pull
+	}
+	a.confirm = cf
+}
+
+// forcePush pushes the branch over the remote's, with a lease: only while
+// the remote's is the one last fetched.
+func (a *app) forcePush() {
+	st := a.git.status
+	if st == nil || st.Branch == "" {
+		a.fail("Check out a branch to push.")
+		return
+	}
+	branch, upstream := st.Branch, st.Upstream != ""
+	a.gitDo("Force pushing…", func(r *git.Repo) error { return r.ForcePush(branch, upstream) }, func() {
+		a.tell(note{message: "Force pushed " + branch})
+	})
+}
+
+// sync pulls the upstream's commits, then pushes the branch's own, as VS
+// Code's Sync Changes does; a branch without an upstream is published.
+func (a *app) sync() {
+	st := a.git.status
+	if st == nil || st.Branch == "" {
+		a.fail("Check out a branch to sync.")
+		return
+	}
+	if st.Upstream == "" {
+		a.push()
+		return
+	}
+	a.pullThen(a.push)
 }
 
 // switchBranch checks out a branch, or makes it first when create is set,
@@ -517,6 +627,12 @@ func (a *app) inHead(hash string) bool {
 // are saved, then says done. When it stops for conflicts it says how to
 // go on, and the message it proposes goes in the box.
 func (a *app) runOp(op git.Op, busy, done string, fn func(r *git.Repo) error) {
+	a.runOpThen(op, busy, done, fn, nil)
+}
+
+// runOpThen runs a command as runOp does, then calls then unless it
+// failed or stopped for conflicts.
+func (a *app) runOpThen(op git.Op, busy, done string, fn func(r *git.Repo) error, then func()) {
 	if !a.docsSaved("a " + strings.ToLower(op.Title())) {
 		return
 	}
@@ -533,6 +649,9 @@ func (a *app) runOp(op git.Op, busy, done string, fn func(r *git.Repo) error) {
 		g.refsGen++
 		if !stopped {
 			a.tell(note{message: done})
+			if then != nil {
+				then()
+			}
 			return
 		}
 		if op != git.OpRebase && strings.TrimSpace(g.message) == "" {
@@ -752,6 +871,12 @@ func (a *app) branchMenu(m *ui.Menu) {
 	if m.Item("Create Branch…").Disabled(g.busy != "").Chosen() {
 		a.post(a.askNewBranch)
 	}
+	if m.Item("Rename Branch…").Disabled(g.busy != "" || g.status == nil || g.status.Branch == "").Chosen() {
+		a.post(func() { a.askRenameBranch("") })
+	}
+	if m.Item("Delete Branch…").Disabled(g.busy != "").Chosen() {
+		a.post(a.openDeleteBranchPicker)
+	}
 	m.Separator()
 	if m.Item("Fetch").Disabled(g.busy != "").Chosen() {
 		a.post(a.fetch)
@@ -761,6 +886,25 @@ func (a *app) branchMenu(m *ui.Menu) {
 	}
 	if m.Item("Push").Disabled(g.busy != "").Chosen() {
 		a.post(a.push)
+	}
+	a.remoteMoreMenu(m)
+}
+
+// remoteMoreMenu has the menus' less common ways to pull and push: by a
+// rebase or a merge, forced, and both at once.
+func (a *app) remoteMoreMenu(m *ui.Menu) {
+	busy := a.git.busy != ""
+	if m.Item("Pull (Rebase)").Disabled(busy).Chosen() {
+		a.post(func() { a.pullWith(git.PullRebase, nil) })
+	}
+	if m.Item("Pull (Merge)").Disabled(busy).Chosen() {
+		a.post(func() { a.pullWith(git.PullMerge, nil) })
+	}
+	if m.Item("Force Push…").Disabled(busy).Chosen() {
+		a.post(func() { a.askForcePush(false) })
+	}
+	if m.Item("Sync").Disabled(busy).Chosen() {
+		a.post(a.sync)
 	}
 }
 
