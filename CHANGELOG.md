@@ -5,6 +5,9 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Windows: terminals use the ConPTY of Windows Terminal, shipped with the app, instead of Windows 10's own, which
+  dropped the mouse and the full screen of programs such as Claude Code, Codex and pi: they no longer lag, and the
+  wheel scrolls them.
 - Merge conflicts in the editor: each block of markers is tinted, with **Accept Current**, **Accept Incoming** and
   **Accept Both** on its first line, commands for the conflict at the caret or the whole file, **Next Conflict** and
   **Previous Conflict**, and a toast that stages the file once its last conflict is resolved.

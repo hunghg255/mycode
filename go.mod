@@ -19,3 +19,5 @@ require (
 	github.com/go-text/typesetting v0.3.5 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
+
+replace github.com/egoist/mygo => github.com/hunghg255/mygo v0.5.5-conpty.1
