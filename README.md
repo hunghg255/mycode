@@ -13,22 +13,25 @@ https://github.com/user-attachments/assets/673e7907-2b2c-4ed6-9093-1ba9633cd61c
 
 ## Features
 
-- **Editor:** tabs, Chroma syntax highlighting, indent guides, sticky scroll, breadcrumbs and word wrap
-- **Smart editing:** auto-indent, auto-closing brackets and quotes, line commands, and per-tab undo
-- **Columns:** split the editor side by side and drag tabs between columns
-- **Explorer:** a live file tree that follows the disk and dims Git-ignored files
+- **Editor:** tabs with preview tabs, Chroma syntax highlighting, a minimap, indent guides, sticky scroll, breadcrumbs,
+  word wrap, and ⇧⌘T to reopen closed tabs
+- **Smart editing:** auto-indent, auto-closing brackets and quotes, line commands, sorting, and per-tab undo
+- **Columns:** split the editor side by side, drag tabs between columns, and lock a column for terminals
+- **Explorer:** a live file tree that follows the disk, dims Git-ignored files, and shows Material or Lucide file icons
 - **Quick open:** fuzzy file search, go to line (`:42`), go to symbol (`@`) and a command palette (`>`, ⇧⌘P)
 - **Find and replace:** case, whole-word and regex matching, searched in the background in large files
 - **Search:** find and replace across the folder's files (⇧⌘F, ⇧⌘H), with files to include and exclude, and a
   preview of each replacement
-- **Git:** a source control view to stage, commit, amend, undo, pull and push, every change in one diff, folded
-  around the changes, inline or side by side, a graph of the commits with their branches and tags, each with its own
-  diff, gutter marks that revert or stage a change, branches and blame
-- **Terminal:** Ghostty's emulator (libghostty-vt), in the bottom panel or in a tab
+- **Git:** a source control view to stage, commit, amend, undo, pull, push, sync and force push, every change in one
+  diff, folded around the changes, inline or side by side, with hunk staging, a graph of the commits with their
+  branches and tags, gutter marks that revert or stage a change, inline blame, branches, stash and merge conflicts
+- **Review comments:** comment on lines of a diff or a file, then send them all to the agent in the terminal
+- **Terminal:** Ghostty's emulator (libghostty-vt), in the bottom panel or in a tab, with profiles (PowerShell, Git
+  Bash, WSL and your own) and ⌘-click on `file:line:col` to open it in the editor
 - **Image viewer:** PNG, JPEG, GIF, WebP and BMP
 - **Previews:** a live preview of Markdown and SVG beside the source (⇧⌘V)
-- **Windows:** a window per folder or every folder in one window as project tabs, a welcome page with the recent
-  folders, Open Recent (⌃R), and a `mycode` shell command
+- **Windows:** project tabs that keep every folder in one window, a welcome page with the recent folders, Open Recent
+  (⌃R), and a `mycode` shell command
 - **Themes:** light and dark, The Matrix with digital rain, and Claude and Qoder, each in light and dark
 - **Auto save,** and every window reopened as you left it, with its columns, tabs and carets
 - **Settings:** JSON files applied as you save them, with the code's and the terminal's fonts, weight, ligatures and
@@ -36,6 +39,18 @@ https://github.com/user-attachments/assets/673e7907-2b2c-4ed6-9093-1ba9633cd61c
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the details, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a tour of the
 source and how fast it runs, and [CONTRIBUTING.md](CONTRIBUTING.md) to build, test and release MyCode.
+
+## Documentation site
+
+`docs/` is also a Vite + React site that presents every feature of MyCode, with the screenshots and shortcuts. It needs
+Node.js 20.19 or later:
+
+```sh
+cd docs
+npm install
+npm run dev        # serve it at http://localhost:5173
+npm run build      # build a static site into docs/dist
+```
 
 ## Tour
 
@@ -104,17 +119,20 @@ Explorer's menu of folders and files by itself.
 | ⌘S / ⇧⌘S / ⌥⌘S | Save / save as / save all |
 | ⌘O / ⌥⌘O / ⌃R | Open folder / open folder in a new window / open recent |
 | ⌘N / ⌘W / ⌘1…9 / ⌃Tab | New file / close tab / go to tab / next tab |
+| ⇧⌘T | Reopen closed tab |
 | ⇧⌘] / ⇧⌘[ / ⌃⌘1…9 | Next / previous / go to project, with project tabs |
 | ⌘\\ / ⌥⌘→ / ⌥⌘← | Split right / next column / previous column |
 | ⌘B / ⌃\` / ⌃⇧\` | Toggle sidebar / toggle terminal panel / new terminal |
 | ⌘Z / ⇧⌘Z | Undo / redo |
 | Tab / ⇧Tab, ⌘] / ⌘[ | Indent / outdent |
 | ⌘/ | Toggle line comment |
+| ⌃⇧G / ⌥F5 / ⇧⌥F5 | Source control / next change / previous change |
+| ⇧⌘M | Add review comment |
 | ⌥↑ / ⌥↓, ⇧⌥↑ / ⇧⌥↓ | Move line / copy line |
 | ⇧⌘K / ⌘↵ / ⇧⌘↵ | Delete line / insert line below / insert line above |
 | ⌘L / ⇧⌘\\ | Select line / go to bracket |
 | ⌘= / ⌘- / ⌘0 | Zoom text or image in / out / reset |
-| ⇧⌘V | Toggle SVG preview |
+| ⇧⌘V | Toggle Markdown or SVG preview |
 | ⌥Z | Toggle word wrap for the current tab |
 
 ## License
