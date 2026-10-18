@@ -222,7 +222,8 @@ Code's `merge-conflict.*` names in `keybindings.json`. Once the last conflict of
 
 **Git → Stash**, the **Stash** submenu of source control's **⋯** menu and the command palette put the changes in the
 stash, with a message or none, and the files Git does not track too with **Stash (Include Untracked)…**; the toast's
-**Pop** brings them back. **Apply Latest Stash** and **Pop Latest Stash** bring the last back, keeping it or not.
+**Pop** brings them back. **Stash Changes…** in the menu of a changed file stashes that file alone, or the files
+chosen, untracked or not. **Apply Latest Stash** and **Pop Latest Stash** bring the last back, keeping it or not.
 **Apply Stash…**, **Pop Stash…**, **View Stash…** and **Drop Stash…** open a box of the stash's entries, found by
 message, each with a menu of all four: viewing shows an entry's changes in a tab, as a commit's, and dropping asks
 first. Changes staged when stashed are staged again. When they clash with the work tree's, the files are left in

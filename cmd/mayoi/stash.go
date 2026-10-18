@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -65,12 +66,40 @@ func (a *app) askStash(untracked bool) {
 	}}
 }
 
-// stashChanges puts the changes in a stash entry, once the documents are saved.
-func (a *app) stashChanges(msg string, untracked bool) {
+// askStashChosen asks for the message of a stash entry, then puts the
+// changes of the chosen files in it, or of r's alone when it is not
+// chosen, as the menu of a changed file does.
+func (a *app) askStashChosen(r scmRow) {
+	var paths []string
+	files, untracked := 0, false
+	for _, e := range a.scmActionEntries(r) {
+		if e.Submodule() {
+			continue
+		}
+		files++
+		paths = append(paths, entryPaths(e, true)...)
+		untracked = untracked || e.Untracked()
+	}
+	if files == 0 {
+		return
+	}
+	title := "Stash " + filepath.Base(r.e.Path) + "…"
+	if files > 1 {
+		title = "Stash " + plural(files, "File") + "…"
+	}
+	a.prompt = &prompt{title: title, hint: "a message, or none", done: func(msg string) string {
+		a.stashChanges(strings.TrimSpace(msg), untracked, paths...)
+		return ""
+	}}
+}
+
+// stashChanges puts the changes in a stash entry, once the documents are
+// saved: those of paths alone when it is set.
+func (a *app) stashChanges(msg string, untracked bool, paths ...string) {
 	if !a.docsSaved("stashing") {
 		return
 	}
-	a.gitDo("Stashing…", func(r *git.Repo) error { return r.StashPush(msg, untracked) }, func() {
+	a.gitDo("Stashing…", func(r *git.Repo) error { return r.StashPush(msg, untracked, paths...) }, func() {
 		a.tell(note{message: "Stashed the changes", label: "Pop", action: func() { a.applyStash("stash@{0}", true) }})
 	})
 }

@@ -677,14 +677,17 @@ func (s Stash) Message() string {
 
 // StashPush puts the changes of the work tree and the index in the stash,
 // with message when it is set, and the files Git does not track with
-// untracked.
-func (r *Repo) StashPush(message string, untracked bool) error {
+// untracked. With paths, only the changes of those files go in it.
+func (r *Repo) StashPush(message string, untracked bool, paths ...string) error {
 	args := []string{"stash", "push"}
 	if untracked {
 		args = append(args, "--include-untracked")
 	}
 	if message != "" {
 		args = append(args, "-m", message)
+	}
+	if len(paths) > 0 {
+		args = append(append(args, "--"), paths...)
 	}
 	_, err := r.run(nil, args...)
 	return err

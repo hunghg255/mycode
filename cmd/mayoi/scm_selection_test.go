@@ -240,3 +240,54 @@ func TestScmSelectionDiscard(t *testing.T) {
 		t.Fatalf("discard of an unselected row: %+v", hs.a.confirm)
 	}
 }
+
+// TestScmMenuStash: a row's menu stashes that file alone, and a chosen
+// row's the chosen files, leaving the others.
+func TestScmMenuStash(t *testing.T) {
+	hs := scmSelectionFixture(t, false)
+	left := func() []string {
+		var names []string
+		for _, e := range hs.a.git.status.Entries {
+			names = append(names, filepath.Base(e.Path))
+		}
+		slices.Sort(names)
+		return names
+	}
+	hs.tt.RightClick("a.txt")
+	hs.settle()
+	if err := hs.tt.ChooseMenuItem("Stash Changes…"); err != nil {
+		t.Fatalf("%v: %q", err, hs.tt.Menu())
+	}
+	hs.settle()
+	if hs.a.prompt == nil || hs.a.prompt.title != "Stash a.txt…" {
+		t.Fatalf("prompt %+v", hs.a.prompt)
+	}
+	hs.a.prompt.done("just a")
+	hs.a.prompt = nil
+	hs.settleGit()
+	if got := left(); !slices.Equal(got, []string{"b.txt", "c.txt", "d.txt"}) {
+		t.Fatalf("after stashing a.txt: %v", got)
+	}
+	hs.tt.Click("b.txt")
+	hs.tt.ClickWith(ui.Shift, "c.txt")
+	hs.settle()
+	hs.tt.RightClick("c.txt")
+	hs.settle()
+	if err := hs.tt.ChooseMenuItem("Stash Changes…"); err != nil {
+		t.Fatal(err)
+	}
+	hs.settle()
+	if hs.a.prompt == nil || hs.a.prompt.title != "Stash 2 Files…" {
+		t.Fatalf("prompt %+v", hs.a.prompt)
+	}
+	hs.a.prompt.done("")
+	hs.a.prompt = nil
+	hs.settleGit()
+	if got := left(); !slices.Equal(got, []string{"d.txt"}) {
+		t.Fatalf("after stashing the chosen: %v", got)
+	}
+	ss, err := hs.a.git.repo.StashList()
+	if err != nil || len(ss) != 2 || ss[1].Message() != "just a" {
+		t.Fatalf("stash %+v, %v", ss, err)
+	}
+}

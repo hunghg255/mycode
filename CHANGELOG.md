@@ -5,6 +5,9 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
+- Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
+  its list.
 - A minimap along the right of each editor, as in VS Code: the whole file, small, in its colors, with the lines changed
   since the last commit and the selection. A click scrolls there, the slider drags, and the wheel over it scrolls the
   editor. Drag its left edge to make it wider or narrower (`minimapWidth`); **View → Minimap** hides it (`minimap`).

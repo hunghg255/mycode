@@ -1360,6 +1360,9 @@ func (a *app) scmFileMenu(m *ui.Menu, r scmRow, action *func()) {
 			*action = func() { a.discardChosen(r) }
 		}
 	}
+	if r.group != groupMerge && !e.Submodule() && m.Item("Stash Changes…").Chosen() {
+		*action = func() { a.askStashChosen(r) }
+	}
 	m.Separator()
 	if m.Item("Reveal in Explorer").Chosen() {
 		*action = func() { a.showExplorer(); a.revealInTree(e.Path) }

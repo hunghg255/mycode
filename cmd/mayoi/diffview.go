@@ -583,7 +583,10 @@ func (a *app) refreshDiff(v *diffView) {
 			reading++
 		}
 	}
-	lo, hi := max(v.near[0], 0), min(v.near[1], len(v.files))
+	// near is from the last paint: a commit or a stash can have taken
+	// files away since, leaving it past the end.
+	hi := min(v.near[1], len(v.files))
+	lo := min(max(v.near[0], 0), hi)
 	order := make([]*diffFile, 0, hi-lo+1)
 	if t := v.reveal; t != nil {
 		for _, f := range v.files {

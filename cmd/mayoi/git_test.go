@@ -698,6 +698,36 @@ func TestDiffScrollsToTheFileChosen(t *testing.T) {
 	}
 }
 
+// TestDiffShrinksBelowTheView: a commit that takes away the files of the
+// changes in view leaves the diff empty, rather than ending the app.
+func TestDiffShrinksBelowTheView(t *testing.T) {
+	hs := newHarness(t, true)
+	git := hs.gitRepo()
+	a := hs.a
+	for i := range 30 {
+		os.WriteFile(hs.path(fmt.Sprintf("f%02d.txt", i)), []byte("one\ntwo\nthree\n"), 0o644)
+	}
+	git("add", ".")
+	git("commit", "-qm", "files")
+	for i := range 30 {
+		os.WriteFile(hs.path(fmt.Sprintf("f%02d.txt", i)), []byte(fmt.Sprintf("one\n%d\nthree\n", i)), 0o644)
+	}
+	hs.settleGit()
+	a.showChanges(diffTarget{path: hs.path("f25.txt"), base: diffIndex}, true)
+	hs.settleGit()
+	v := a.activeTab().diff
+	if v.near[0] < 2 {
+		t.Fatalf("near %v: the files in view are not far enough down", v.near)
+	}
+	git("add", ".")
+	git("commit", "-qm", "changes")
+	hs.settleGit()
+	hs.tt.Frame()
+	if len(v.files) != 0 {
+		t.Errorf("%d files after the commit", len(v.files))
+	}
+}
+
 func TestDiffFolds(t *testing.T) {
 	hs := newHarness(t, true)
 	git := hs.gitRepo()
