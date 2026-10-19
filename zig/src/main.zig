@@ -27,12 +27,73 @@ pub const Main = struct {
     shells: std.ArrayList(*Shell) = .empty,
     focused: ?*Shell = null,
     quitting: bool = false,
+    /// The menu bar's labels, and what its recent folders were made of.
+    menu_arena: std.heap.ArenaAllocator,
+    menu_recent_len: usize = 0,
+    menu_recent_first: u64 = 0,
     /// Set as main returns: windows closing then find their state gone.
     ending: bool = false,
 
     pub fn queue(m: *Main, cmd: commands.Cmd) void {
         const sh = m.focused orelse (if (m.shells.items.len > 0) m.shells.items[0] else return);
         sh.queue(cmd);
+    }
+
+    /// The menu bar again, with the recent folders as they are now.
+    pub fn buildMenu(m: *Main) !void {
+        var recent: std.ArrayList([]const u8) = .empty;
+        defer recent.deinit(m.gpa);
+        for (m.state.f.recent) |r| {
+            if (recent.items.len == 10) break;
+            // Not the window's own, nor one gone from the disk.
+            if (m.focused) |sh| if (sh.active()) |wb| if (std.mem.eql(u8, wb.root, r)) continue;
+            if (!fs.isDirectory(m.io, r)) continue;
+            try recent.append(m.gpa, r);
+        }
+        // The labels outlive this build: the old menu goes first.
+        var next: std.heap.ArenaAllocator = .init(m.gpa);
+        errdefer next.deinit();
+        const bar = try commands.menuBar(Main, m, next.allocator(), recent.items);
+        try m.app.setMenu(bar);
+        m.menu_arena.deinit();
+        m.menu_arena = next;
+        m.menu_recent_len = m.state.f.recent.len;
+        m.menu_recent_first = if (m.state.f.recent.len > 0) std.hash.Wyhash.hash(0, m.state.f.recent[0]) else 0;
+    }
+
+    /// Builds the menu again when the recent folders changed.
+    pub fn menuIfChanged(m: *Main) void {
+        const first = if (m.state.f.recent.len > 0) std.hash.Wyhash.hash(0, m.state.f.recent[0]) else 0;
+        if (m.state.f.recent.len == m.menu_recent_len and first == m.menu_recent_first) return;
+        m.buildMenu() catch {};
+    }
+
+    pub fn recentHandler(comptime k: usize) fn (*Main, *myzig.menu.Item) void {
+        return struct {
+            fn f(m: *Main, item: *myzig.menu.Item) void {
+                _ = item;
+                const sh = m.focused orelse return;
+                // The item's label is the folder.
+                var n: usize = 0;
+                for (m.state.f.recent) |r| {
+                    if (sh.active()) |wb| if (std.mem.eql(u8, wb.root, r)) continue;
+                    if (!fs.isDirectory(m.io, r)) continue;
+                    if (n == k) {
+                        const p = m.gpa.dupe(u8, r) catch return;
+                        defer m.gpa.free(p);
+                        sh.openFolder(p, false);
+                        return;
+                    }
+                    n += 1;
+                }
+            }
+        }.f;
+    }
+
+    pub fn clearRecentItem(m: *Main, _: *myzig.menu.Item) void {
+        m.state.clearRecent();
+        m.state.save();
+        m.buildMenu() catch {};
     }
 
     pub fn loadKeys(m: *Main) void {
@@ -104,6 +165,7 @@ pub const Main = struct {
         };
         if (!m.quitting or roots.items.len > 0) m.state.setProjects(roots.items, active);
         m.state.save();
+        m.menuIfChanged();
     }
 
     pub fn closeShell(m: *Main, sh: *Shell) void {
@@ -226,6 +288,7 @@ pub fn main(init: std.process.Init) !void {
         .state = undefined,
         .keymap = .init(gpa),
         .profiles_arena = .init(gpa),
+        .menu_arena = .init(gpa),
     };
     defer {
         // Each window closing frees its shell (closeShell).
@@ -243,6 +306,7 @@ pub fn main(init: std.process.Init) !void {
         m.state.deinit();
         m.store.deinit();
         m.profiles_arena.deinit();
+        m.menu_arena.deinit();
     }
     @import("crashlog.zig").start(gpa, io, m.store.dir);
     m.state = .load(gpa, io, m.store.state_path);
@@ -266,8 +330,7 @@ pub fn main(init: std.process.Init) !void {
     if (roots.items.len == 0) for (m.state.f.projects) |p| if (fs.isDirectory(io, p)) try roots.append(a, try a.dupe(u8, p));
     if (roots.items.len == 0) try roots.append(a, try fs.absolute(a, io, "."));
 
-    const bar = commands.menuBar(Main, &m);
-    try app.setMenu(&bar);
+    try m.buildMenu();
     if (m.store.s.projectTabs) {
         try m.newWindow(roots.items);
         if (m.focused) |sh| sh.show(@min(m.state.f.active, sh.projects.items.len - 1));

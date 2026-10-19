@@ -310,11 +310,13 @@ pub fn Handler(comptime Target: type) type {
 
 const menu_names = [_][]const u8{ "File", "Edit", "Selection", "View", "Go", "Git", "Help" };
 
-/// The menu bar, built from the commands' menus, in order.
-pub fn menuBar(comptime Target: type, target: *Target) [menu_names.len]myzig.MenuItem {
+/// The menu bar, built from the commands' menus, in order, with the
+/// recent folders under File → Open Recent. Its items are in `a`, kept
+/// while the menu shows.
+pub fn menuBar(comptime Target: type, target: *Target, a: std.mem.Allocator, recent: []const []const u8) ![]const myzig.MenuItem {
     const H = Handler(Target);
-    var bar: [menu_names.len]myzig.MenuItem = undefined;
-    inline for (menu_names, 0..) |menu_name, mi| {
+    var bar: std.ArrayList(myzig.MenuItem) = .empty;
+    inline for (menu_names) |menu_name| {
         const items = comptime blk: {
             @setEvalBranchQuota(100_000);
             var n: usize = 0;
@@ -330,14 +332,22 @@ pub fn menuBar(comptime Target: type, target: *Target) [menu_names.len]myzig.Men
             const final = cmds;
             break :blk final;
         };
-        const Static = struct {
-            var list: [items.len]myzig.MenuItem = undefined;
-        };
-        inline for (items, 0..) |cmd, i| {
+        var list: std.ArrayList(myzig.MenuItem) = .empty;
+        inline for (items) |cmd| {
             const inf = comptime info(cmd);
-            Static.list[i] = .{ .label = inf.title, .accelerator = inf.accel, .click = .of(target, H.of(cmd)) };
+            if (cmd == .open_recent) {
+                // The last ten folders, then More… and Clear.
+                var sub: std.ArrayList(myzig.MenuItem) = .empty;
+                inline for (0..10) |k| if (k < recent.len) {
+                    try sub.append(a, .{ .label = try a.dupe(u8, recent[k]), .click = .of(target, Target.recentHandler(k)) });
+                };
+                if (recent.len > 0) try sub.append(a, .separator);
+                try sub.append(a, .{ .label = "More…", .accelerator = "", .click = .of(target, H.of(.open_recent)) });
+                try sub.append(a, .{ .label = "Clear Recently Opened", .click = .of(target, Target.clearRecentItem) });
+                try list.append(a, .{ .label = "Open Recent", .submenu = sub.items });
+            } else try list.append(a, .{ .label = inf.title, .accelerator = inf.accel, .click = .of(target, H.of(cmd)) });
         }
-        bar[mi] = .{ .label = menu_name, .submenu = &Static.list };
+        try bar.append(a, .{ .label = menu_name, .submenu = list.items });
     }
-    return bar;
+    return bar.items;
 }
