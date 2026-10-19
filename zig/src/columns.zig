@@ -24,6 +24,11 @@ pub const Body = union(enum) {
 pub const Item = struct {
     body: Body,
     preview: bool = false,
+    /// A file's selection in this tab, when another tab shows the file too
+    /// (each keeps its own caret; they share the text).
+    sel: ?ui.TextSel = null,
+    /// Its editor's id in the last frame (which tab's text has the keyboard).
+    area_id: u64 = 0,
 
     pub fn title(it: *const Item, c: *ui.Context) []const u8 {
         return switch (it.body) {
@@ -53,7 +58,7 @@ pub const Item = struct {
 
     pub fn destroy(it: *Item, gpa: std.mem.Allocator) void {
         switch (it.body) {
-            .file => |d| d.destroy(),
+            .file => |d| d.release(),
             .image => |im| im.destroy(),
             .changes => |ch| ch.destroy(),
             .commit => |cv| cv.destroy(),
@@ -387,8 +392,23 @@ pub const Editors = struct {
     pub fn splitRight(e: *Editors, from: Loc) void {
         const ni = e.addColumn(from.col + 1) catch return;
         const src_col = if (from.col >= ni) from.col + 1 else from.col;
-        // A file shown in one column moves: one editor shows each file.
-        e.move(.{ .col = src_col, .idx = from.idx }, ni, null);
+        const it = e.cols.items[src_col].items.items[from.idx];
+        switch (it.body) {
+            // A file shows in both columns, sharing its text and undo.
+            .file => |d| {
+                const copy = e.newItem(.{ .file = d.retain() }, false) catch {
+                    d.release();
+                    return;
+                };
+                copy.sel = d.editor.area.sel;
+                e.cols.items[ni].items.append(e.gpa, copy) catch {
+                    copy.destroy(e.gpa);
+                    return;
+                };
+                e.show(.{ .col = ni, .idx = e.cols.items[ni].items.items.len - 1 });
+            },
+            else => e.move(.{ .col = src_col, .idx = from.idx }, ni, null),
+        }
     }
 
     /// Saves files a second after their last edit; asks for a frame then.

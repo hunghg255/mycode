@@ -26,7 +26,8 @@ const peek = @import("peek.zig");
 pub fn keys(wb: *Workbench, c: *ui.Context) void {
     const sh = wb.shell;
     const doc = wb.editors.currentDoc();
-    const editor_focus = if (doc) |d| d.editor.area.id != 0 and c.focus == d.editor.area.id else false;
+    const cur_id = if (wb.editors.current()) |it| it.area_id else 0;
+    const editor_focus = doc != null and cur_id != 0 and c.focus == cur_id;
     const cx: keymap.Context = .{
         .editor_focus = editor_focus,
         .input_focus = c.focused_text != null and !editor_focus,
@@ -143,7 +144,15 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
     ed.strip(c, ci, chrome);
     c.keyed(it);
     switch (it.body) {
-        .file => |d| fileBody(wb, c, d, chrome),
+        .file => |d| {
+            // A file in two columns: each tab its own selection.
+            if (d.refs > 1) if (it.sel) |s| {
+                d.editor.area.sel = s;
+            };
+            fileBody(wb, c, d, chrome);
+            it.area_id = d.editor.area.id;
+            if (d.refs > 1) it.sel = d.editor.area.sel;
+        },
         .image => |im| im.view(c),
         .changes => |ch| {
             ch.rebuild(wb.scm.changes, wb.scm.generation);

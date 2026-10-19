@@ -54,6 +54,8 @@ pub const Doc = struct {
     /// Conflict blocks, found again as the text changes.
     blocks: []conflicts.Block = &.{},
     blocks_version: u64 = std.math.maxInt(u64),
+    /// The tabs showing it: two columns can share a file's text and undo.
+    refs: u32 = 1,
     /// The change whose HEAD lines show in a box (a gutter mark clicked).
     peek: ?usize = null,
     /// The lines in view in the last frame.
@@ -74,6 +76,18 @@ pub const Doc = struct {
         d.saved = d.editor.area.doc.version;
         d.seen = d.saved;
         return d;
+    }
+
+    /// Another tab shows the file (Split Right): they share its text.
+    pub fn retain(d: *Doc) *Doc {
+        d.refs += 1;
+        return d;
+    }
+
+    /// A tab lets go of it; the last frees it.
+    pub fn release(d: *Doc) void {
+        d.refs -= 1;
+        if (d.refs == 0) d.destroy();
     }
 
     pub fn destroy(d: *Doc) void {
