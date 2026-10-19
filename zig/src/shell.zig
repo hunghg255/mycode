@@ -428,6 +428,13 @@ pub const Shell = struct {
         }
     }
 
+    /// MyCode's logo, or the theme's mascot in its place.
+    pub fn logo(sh: *Shell, c: *ui.Context, size: f32) void {
+        const th = sh.store.s.theme;
+        if (std.mem.eql(u8, th, "claude") or std.mem.eql(u8, th, "qoder")) return sh.mascot(c, size);
+        _ = ui.image(c, .{ .key = "mycode-logo", .bytes = @embedFile("icon_png"), .max_width = size, .max_height = size, .radius = size * 0.22, .label = "MyCode" });
+    }
+
     /// Clawd under the Claude theme, Qoder's duck under Qoder's: blinking
     /// now and then, hopping while Git runs.
     pub fn mascot(sh: *Shell, c: *ui.Context, size: f32) void {

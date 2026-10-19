@@ -363,7 +363,7 @@ fn welcome(wb: *Workbench, c: *ui.Context) void {
     const t = c.theme;
     ui.column(c, .{ .width = .fill, .height = .fill, .align_items = .center, .justify = .center, .gap = 10 });
     defer ui.end(c);
-    wb.shell.mascot(c, 56);
+    wb.shell.logo(c, 96);
     ui.text(c, "MyCode", .{ .size = 36, .weight = .bold, .color = t.muted });
     ui.text(c, wb.name(), .{ .size = 14, .color = t.muted });
     _ = c.leaf(.{ .height = .{ .px = 12 } }, .none, null);

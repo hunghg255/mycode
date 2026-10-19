@@ -9,6 +9,9 @@ needs a `## <version>` section here, or its build fails.
   open and the command palette, search and replace, source control with the Changes tab, hunk staging, branches,
   stash, the commits graph, conflicts and review comments, terminals with profiles, project tabs, themes, and
   settings and keybindings read from the Go app's files.
+- The Zig build has an installer, `MyCode Setup <version> x86_64.exe`, with MyCode's icon on the window, the
+  taskbar and the welcome page, the terminal's libraries included, and a crash log. Fixed: choosing a folder or a
+  file in a dialog no longer quits it, and **Open Folder** chooses a folder.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

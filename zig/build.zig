@@ -21,6 +21,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "mainthread", .module = mainthread },
         },
     });
+    // The logo of the welcome page.
+    root.addAnonymousImport("icon_png", .{ .root_source_file = b.path("resources/icon.png") });
     if (win32_res) |res| if (target.result.os.tag == .windows) root.addObjectFile(.{ .cwd_relative = res });
 
     const exe = b.addExecutable(.{ .name = "mycode", .root_module = root });

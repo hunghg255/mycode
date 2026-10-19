@@ -16,7 +16,26 @@ zig build -Doptimize=ReleaseFast -Dstrip=true -Dwindows-gui=true --prefix dist  
 zig-out/bin/mycode.exe <folder> --myzig-snapshot=shot.png --myzig-script="click:README.md"   # headless
 ```
 
-The terminal downloads libghostty-vt and ConPTY into the user's cache the first time it opens.
+The terminal downloads libghostty-vt and ConPTY into the user's cache the first time it opens, unless they are
+beside the executable: `resources/` holds them for the installer (`ghostty-vt.dll`, `conpty.dll`,
+`OpenConsole.exe`, from `%LOCALAPPDATA%\mygo
+atives`; they are not in Git).
+
+## The installer
+
+The myzig CLI (`cd ../../myzig/cli && zig build -Doptimize=ReleaseSmall`) packages the app with its icon, version and
+manifest, and writes an NSIS script; with [NSIS](https://nsis.sourceforge.io) installed it makes the installer:
+
+```sh
+../../myzig/cli/zig-out/bin/myzig build --optimize safe
+makensis .myzig/build/windows-x86_64/installer.nsi   # when the CLI didn't find makensis
+```
+
+`dist/windows-x86_64/` then holds `MyCode/`, a `.zip` and `MyCode Setup <version> x86_64.exe`, which installs for the
+user into `%LOCALAPPDATA%\Programs\MyCode`, with a Start menu shortcut and an uninstaller.
+
+A crash of a release started from Explorer writes what happened to `crash-zig.log` in the data folder; the last ten
+move to `crashes/`.
 
 ## What it has
 

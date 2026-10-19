@@ -1,0 +1,10 @@
+// The app, for the myzig CLI: `myzig build` packages it, with its icon and
+// the NSIS installer (`MyCode Setup <version> x86_64.exe`).
+.{
+    .name = "MyCode",
+    .identifier = "com.hunghg255.mycode",
+    .copyright = "Copyright hunghg255",
+    .icon = "resources/icon.png",
+    .executable = "mycode",
+    .windows = .{ .installer = true },
+}
