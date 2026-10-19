@@ -50,13 +50,14 @@ move to `crashes/`.
   branches (switch, create, rename, delete), stash, the commits graph, a commit's changes, the **Changes** tab with
   hunk staging, merge conflicts, review comments sent to the terminal.
 - **Terminals** in the panel or in columns, with profiles (PowerShell, Command Prompt, Git Bash, WSL, your own).
-- **Pictures** (PNG on Windows), Markdown and SVG previews.
+- **Pictures** (PNG, JPEG, GIF, BMP, WebP), Markdown and SVG previews.
 - **Project tabs**, one instance (later launches hand their folders over), the `mycode` command and Explorer menu
   on Windows, the MyCode, Matrix, Claude and Qoder themes, settings and keybindings applied as they are saved.
 
 ## Not yet
 
-- JPEG, GIF, WebP and BMP pictures: myzig decodes PNG off macOS.
-- Syntax colors for languages myzig's highlighter doesn't know (HTML, Markdown's own).
-- The Matrix's digital rain, indent guides, the Material and Lucide icon themes, review comments made in a diff,
-  pasting files in the Explorer, the update window (Check for Updates opens the releases page).
+- Long lines in a diff don't wrap.
+- `fontFeatures` and `terminalFontFamily`; the whitespace in a selection isn't drawn.
+- Check marks on commands in the palette; a checkerboard behind pictures, and panning them; local pictures in
+  Markdown.
+- Keybindings don't change the accelerators shown in the menus.

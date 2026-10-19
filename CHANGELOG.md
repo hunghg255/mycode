@@ -13,6 +13,10 @@ needs a `## <version>` section here, or its build fails.
   taskbar and the welcome page, the terminal's libraries included, and a crash log. Fixed: choosing a folder or a
   file in a dialog no longer quits it, **Open Folder** chooses a folder, and the Zig build no longer quits as its
   window first draws.
+- The Zig build also has the Material and Lucide icon themes and project icons, the Matrix's digital rain, indent
+  guides, JPEG, GIF, BMP and WebP pictures, blame after the caret's line, the box of a change from the gutter
+  (revert, stage, next, previous), review comments in a diff, copying and pasting files in the Explorer, choosing
+  several files in source control, copying a terminal's selection as it is made, and the update window.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.
