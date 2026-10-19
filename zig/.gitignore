@@ -4,3 +4,4 @@ dist/
 resources/*.dll
 resources/*.exe
 .myzig/
+guidbg/
