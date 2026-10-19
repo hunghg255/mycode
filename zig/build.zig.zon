@@ -1,0 +1,15 @@
+.{
+    .name = .mycode,
+    .version = "0.1.0",
+    .fingerprint = 0xa73bd01d02fa39e1,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .myzig = .{ .path = "../../myzig" },
+        .myzig_terminal = .{ .path = "../../myzig/plugins/terminal" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
