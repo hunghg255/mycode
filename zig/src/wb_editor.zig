@@ -20,6 +20,7 @@ const wbgit = @import("wb_git.zig");
 const wbfiles = @import("wb_files.zig");
 const jobs = @import("jobs.zig");
 const themes = @import("themes.zig");
+const peek = @import("peek.zig");
 
 /// keybindings.json's keys, then the keys the window takes itself.
 pub fn keys(wb: *Workbench, c: *ui.Context) void {
@@ -243,6 +244,34 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
     const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight });
     d.first_line = r.first_line;
     d.last_line = r.last_line;
+    // A mark clicked in the gutter shows the change as HEAD had it.
+    if (d.editor.area.gutter_press) |l| {
+        d.editor.area.gutter_press = null;
+        d.peek = if (l < d.marks.items.len and d.marks.items[l] != .none) l else null;
+    }
+    if (d.peek) |l| switch (peek.view(c, d, l, s.fontSize, s.lineHeight, 56)) {
+        .none => {},
+        .close => d.peek = null,
+        .revert => {
+            _ = peek.revert(c.alloc(), d, l);
+            d.peek = null;
+            c.changed = true;
+        },
+        .stage => {
+            d.editor.area.collapse(d.editor.area.doc.lineStart(@min(l, d.editor.area.doc.lineCount() - 1)));
+            wbgit.hunkAtCaret(wb, true);
+            d.peek = null;
+            c.changed = true;
+        },
+        .next, .prev => |a| {
+            d.editor.area.collapse(d.editor.area.doc.lineStart(@min(l, d.editor.area.doc.lineCount() - 1)));
+            if (d.nextChange(a == .next)) |nl| {
+                d.peek = nl;
+                d.editor.goToLine(nl + 1);
+            }
+            c.changed = true;
+        },
+    };
 }
 
 /// The whole file, small, in rows of its lines' lengths, with the lines

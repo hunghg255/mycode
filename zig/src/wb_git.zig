@@ -223,26 +223,32 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         },
         .branch_at => |h| wb.prompt.ask(.new_branch_at, "A new branch's name, at this commit", "", h),
         .tag_at => |h| wb.prompt.ask(.new_tag, "A new tag's name", "", h),
-        .stage => |p| {
-            const pp = g.dupe(u8, p) catch return;
-            defer g.free(pp);
-            _ = quick(wb, &.{ "add", "--", pp });
-            stageConflictToast(wb);
+        .stage => |ps| _ = quick(wb, withPaths(c, &.{ "add", "--" }, ps)),
+        .unstage => |ps| _ = quick(wb, withPaths(c, &.{ "reset", "-q", "HEAD", "--" }, ps)),
+        .discard => |ps| {
+            const list = std.mem.join(c.alloc(), "\n", ps) catch return;
+            const what = if (ps.len == 1) ps[0] else c.print("{d} files", .{ps.len});
+            wb.ask(.discard_file, list, "Discard changes?", c.print("{s}\nThis can't be undone; an untracked file goes to the Recycle Bin.", .{what}), &.{ "Cancel", "Discard" });
         },
-        .unstage => |p| {
-            const pp = g.dupe(u8, p) catch return;
-            defer g.free(pp);
-            _ = quick(wb, &.{ "reset", "-q", "HEAD", "--", pp });
-        },
-        .discard => |p| wb.ask(.discard_file, p, "Discard changes?", c.print("{s}\nThis can't be undone; an untracked file goes to the Recycle Bin.", .{p}), &.{ "Cancel", "Discard" }),
         .stage_all => |grp| switch (grp) {
             .untracked => _ = quick(wb, &.{ "add", "-A", "--", "." }),
             else => _ = quick(wb, &.{ "add", "-u", "--", "." }),
         },
         .unstage_all => _ = quick(wb, &.{ "reset", "-q", "HEAD", "--", "." }),
         .discard_all => wb.ask(.discard_all, "", "Discard all changes?", "Every change not staged is lost, and untracked files go to the Recycle Bin.", &.{ "Cancel", "Discard All" }),
-        .stash_files => |p| wb.prompt.ask(.stash_files, "Stash this file: a message (or none)", "", p),
+        .stash_files => |ps| {
+            const list = std.mem.join(c.alloc(), "\n", ps) catch return;
+            wb.prompt.ask(.stash_files, if (ps.len == 1) "Stash this file: a message (or none)" else "Stash these files: a message (or none)", "", list);
+        },
     }
+}
+
+/// `git args... paths...`, in the frame's memory.
+fn withPaths(c: *ui.Context, args: []const []const u8, paths: []const []const u8) []const []const u8 {
+    const out = c.alloc().alloc([]const u8, args.len + paths.len) catch return args;
+    @memcpy(out[0..args.len], args);
+    @memcpy(out[args.len..], paths);
+    return out;
 }
 
 fn stageConflictToast(wb: *Workbench) void {
@@ -269,7 +275,10 @@ pub fn confirmed(wb: *Workbench, c: *ui.Context, button: usize) void {
     const kind = wb.confirm_kind;
     wb.confirm_kind = .close_project; // not .commit_all, which commit reads
     switch (kind) {
-        .discard_file => if (button == 1) discardFile(wb, arg),
+        .discard_file => if (button == 1) {
+            var it = std.mem.splitScalar(u8, arg, '\n');
+            while (it.next()) |p| if (p.len > 0) discardFile(wb, p);
+        },
         .discard_all => if (button == 1) {
             _ = quick(wb, &.{ "checkout", "-q", "--", "." });
             for (wb.scm.changes) |ch| if (ch.status() == .untracked) {
@@ -415,7 +424,16 @@ pub fn promptAnswer(wb: *Workbench, purpose: @import("prompt.zig").Purpose, answ
         .new_tag => _ = quick(wb, &.{ "tag", answer, target }),
         .stash => slow(wb, .stash, if (answer.len > 0) &.{ "stash", "push", "-m", answer } else &.{ "stash", "push" }, ""),
         .stash_untracked => slow(wb, .stash, if (answer.len > 0) &.{ "stash", "push", "-u", "-m", answer } else &.{ "stash", "push", "-u" }, ""),
-        .stash_files => slow(wb, .stash, if (answer.len > 0) &.{ "stash", "push", "-u", "-m", answer, "--", target } else &.{ "stash", "push", "-u", "--", target }, ""),
+        .stash_files => {
+            var args: std.ArrayList([]const u8) = .empty;
+            defer args.deinit(wb.gpa);
+            args.appendSlice(wb.gpa, &.{ "stash", "push", "-u" }) catch return true;
+            if (answer.len > 0) args.appendSlice(wb.gpa, &.{ "-m", answer }) catch return true;
+            args.append(wb.gpa, "--") catch return true;
+            var it = std.mem.splitScalar(u8, target, '\n');
+            while (it.next()) |p| if (p.len > 0) args.append(wb.gpa, p) catch {};
+            slow(wb, .stash, args.items, "");
+        },
         else => return false,
     }
     return true;

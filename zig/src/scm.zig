@@ -26,13 +26,14 @@ pub const Event = union(enum) {
     commit_checkout: []const u8,
     branch_at: []const u8,
     tag_at: []const u8,
-    stage: []const u8,
-    unstage: []const u8,
-    discard: []const u8,
+    /// The files chosen, or the one the button or menu is on (in the frame's memory).
+    stage: []const []const u8,
+    unstage: []const []const u8,
+    discard: []const []const u8,
     stage_all: Group,
     unstage_all,
     discard_all: Group,
-    stash_files: []const u8,
+    stash_files: []const []const u8,
 };
 
 pub const Scm = struct {
@@ -56,7 +57,13 @@ pub const Scm = struct {
     commit_menu: ui.Menu = .{},
     more_menu: ui.Menu = .{},
     row_menu: ui.Menu = .{},
-    selected: ?[]const u8 = null,
+    /// The files chosen (Shift and Ctrl clicks), and where a range began.
+    chosen: std.ArrayList([]u8) = .empty,
+    anchor: ?[]u8 = null,
+    /// The rows in order, this frame (for ranges and Ctrl+A).
+    order: std.ArrayList([]const u8) = .empty,
+    list_focus: bool = false,
+    list_id: u64 = 0,
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io, root: []const u8) Scm {
         return .{ .gpa = gpa, .io = io, .root = root, .graph = .init(gpa) };
@@ -64,6 +71,9 @@ pub const Scm = struct {
 
     pub fn deinit(s: *Scm) void {
         s.clear();
+        s.clearChosen();
+        s.chosen.deinit(s.gpa);
+        s.order.deinit(s.gpa);
         if (s.top) |t| s.gpa.free(t);
         if (s.err) |e| s.gpa.free(e);
         if (s.branch) |b| s.gpa.free(b);
@@ -75,7 +85,50 @@ pub const Scm = struct {
         if (s.buf.len > 0) s.gpa.free(s.buf);
         s.changes = &.{};
         s.buf = &.{};
-        s.selected = null;
+    }
+
+    fn clearChosen(s: *Scm) void {
+        for (s.chosen.items) |p| s.gpa.free(p);
+        s.chosen.clearRetainingCapacity();
+        if (s.anchor) |a| s.gpa.free(a);
+        s.anchor = null;
+    }
+
+    fn isChosen(s: *const Scm, path: []const u8) bool {
+        for (s.chosen.items) |p| if (std.mem.eql(u8, p, path)) return true;
+        return false;
+    }
+
+    fn choose(s: *Scm, path: []const u8) void {
+        if (s.isChosen(path)) return;
+        const d = s.gpa.dupe(u8, path) catch return;
+        s.chosen.append(s.gpa, d) catch s.gpa.free(d);
+    }
+
+    fn unchoose(s: *Scm, path: []const u8) void {
+        for (s.chosen.items, 0..) |p, i| if (std.mem.eql(u8, p, path)) {
+            s.gpa.free(s.chosen.orderedRemove(i));
+            return;
+        };
+    }
+
+    fn setAnchor(s: *Scm, path: []const u8) void {
+        if (s.anchor) |a| s.gpa.free(a);
+        s.anchor = s.gpa.dupe(u8, path) catch null;
+    }
+
+    /// What a row's button or menu acts on: the files chosen when the row is
+    /// one of them, else the row's file alone.
+    fn targets(s: *const Scm, c: *ui.Context, path: []const u8) []const []const u8 {
+        const a = c.alloc();
+        if (s.isChosen(path) and s.chosen.items.len > 1) {
+            const out = a.alloc([]const u8, s.chosen.items.len) catch return &.{};
+            for (s.chosen.items, out) |p, *o| o.* = a.dupe(u8, p) catch "";
+            return out;
+        }
+        const out = a.alloc([]const u8, 1) catch return &.{};
+        out[0] = a.dupe(u8, path) catch "";
+        return out;
     }
 
     /// Reads the status, the branch, its distance from upstream and the commits.
@@ -87,6 +140,16 @@ pub const Scm = struct {
         var buf: []u8 = &.{};
         s.changes = git.status(s.gpa, s.io, top, &buf) catch &.{};
         s.buf = buf;
+        // The files chosen that are still changed stay chosen.
+        var i: usize = s.chosen.items.len;
+        while (i > 0) {
+            i -= 1;
+            var still = false;
+            for (s.changes) |ch| if (std.mem.eql(u8, ch.path, s.chosen.items[i])) {
+                still = true;
+            };
+            if (!still) s.gpa.free(s.chosen.orderedRemove(i));
+        }
         s.generation += 1;
         if (s.branch) |b| s.gpa.free(b);
         s.branch = git.branch(s.gpa, s.io, top);
@@ -206,8 +269,27 @@ pub const Scm = struct {
             ui.end(c);
             if (s.err) |e| ui.text(c, e, .{ .size = 11, .color = t.danger, .wrap = true });
         }
-        ui.scroll(c, .{ .width = .fill, .grow = 1 });
-        defer ui.end(c);
+        s.order.clearRetainingCapacity();
+        // The list takes the keyboard when a row is clicked: Ctrl+A, Space.
+        const sc = c.open(.{ .scroll = true, .direction = .column, .width = .fill, .grow = 1 }, null);
+        defer c.end();
+        const sci = c.interact(sc, .{ .focusable = true });
+        s.list_focus = sci.focused;
+        s.list_id = sci.id;
+        if (sci.focused) {
+            if (c.shortcut(.{ .key = 'a', .cmd = true })) {
+                for (s.changes) |ch| s.choose(ch.path);
+            }
+            if (s.chosen.items.len > 0 and c.shortcut(.{ .key = ' ' })) {
+                var any_unstaged = false;
+                for (s.changes) |ch| if (s.isChosen(ch.path) and !ch.staged()) {
+                    any_unstaged = true;
+                };
+                const chosen = s.targets(c, s.chosen.items[0]);
+                ev = if (any_unstaged) .{ .stage = chosen } else .{ .unstage = chosen };
+            }
+            if (c.shortcut(.{ .key = ui.Shortcut.escape })) s.clearChosen();
+        }
         if (s.changes.len == 0) {
             ui.column(c, .{ .width = .fill, .padding = .xy(12, 8), .gap = 6 });
             ui.text(c, "No changes.", .{ .size = 12, .color = t.muted });
@@ -315,7 +397,8 @@ pub const Scm = struct {
         const t = c.theme;
         var act: Event = .none;
         ui.keyed(c, .{ @intFromEnum(g), std.hash.Wyhash.hash(0, ch.path) });
-        const on = if (s.selected) |sel| std.mem.eql(u8, sel, ch.path) else false;
+        s.order.append(c.alloc(), ch.path) catch {};
+        const on = s.isChosen(ch.path);
         const row = ui.div(c).row().wFull().h(22).pl(if (s.tree) 36 else 22).pr(6).gap(6).itemsCenter().bg(if (on) t.accent.alpha(0.15) else .transparent).hover(t.surface_hover);
         const name = std.fs.path.basenamePosix(ch.path);
         icons.file(c, name);
@@ -327,11 +410,11 @@ pub const Scm = struct {
             if (rowButton(c, "doc.text")) act = .{ .open_file = ch.path };
             switch (g) {
                 .staged => if (rowButton(c, "minus")) {
-                    act = .{ .unstage = ch.path };
+                    act = .{ .unstage = s.targets(c, ch.path) };
                 },
                 else => {
-                    if (g != .merge and rowButton(c, "arrow.clockwise")) act = .{ .discard = ch.path };
-                    if (rowButton(c, "plus")) act = .{ .stage = ch.path };
+                    if (g != .merge and rowButton(c, "arrow.clockwise")) act = .{ .discard = s.targets(c, ch.path) };
+                    if (rowButton(c, "plus")) act = .{ .stage = s.targets(c, ch.path) };
                 },
             }
         }
@@ -340,8 +423,29 @@ pub const Scm = struct {
         const ri = row.interaction();
         row.end();
         if ((ri.clicked or ri.double_clicked) and act == .none) {
-            s.selected = ch.path;
-            act = .{ .open = .{ .path = ch.path, .staged = g == .staged } };
+            if (c.input.shift and s.anchor != null) {
+                // A range, from where the last click was, in the rows' order.
+                var a_i: ?usize = null;
+                for (s.order.items, 0..) |p, k| if (std.mem.eql(u8, p, ch.path)) {
+                    a_i = k;
+                };
+                var b_i: ?usize = null;
+                for (s.order.items, 0..) |p, k| if (std.mem.eql(u8, p, s.anchor.?)) {
+                    b_i = k;
+                };
+                if (a_i != null and b_i != null) {
+                    for (@min(a_i.?, b_i.?)..@max(a_i.?, b_i.?) + 1) |k| s.choose(s.order.items[k]);
+                } else s.choose(ch.path);
+            } else if (c.input.ctrl or c.input.cmd) {
+                if (s.isChosen(ch.path)) s.unchoose(ch.path) else s.choose(ch.path);
+                s.setAnchor(ch.path);
+            } else {
+                s.clearChosen();
+                s.choose(ch.path);
+                s.setAnchor(ch.path);
+                act = .{ .open = .{ .path = ch.path, .staged = g == .staged } };
+            }
+            c.focus = s.list_id;
         }
         if (ui.contextMenu(c, &s.row_menu, ri)) |m| {
             defer m.end();
@@ -349,14 +453,14 @@ pub const Scm = struct {
             if (m.item("Open File", .{})) act = .{ .open_file = ch.path };
             m.separator();
             if (g == .staged) {
-                if (m.item("Unstage Changes", .{})) act = .{ .unstage = ch.path };
+                if (m.item("Unstage Changes", .{})) act = .{ .unstage = s.targets(c, ch.path) };
             } else {
-                if (m.item("Stage Changes", .{})) act = .{ .stage = ch.path };
+                if (m.item("Stage Changes", .{})) act = .{ .stage = s.targets(c, ch.path) };
                 if (g != .merge) if (m.item("Discard Changes", .{})) {
-                    act = .{ .discard = ch.path };
+                    act = .{ .discard = s.targets(c, ch.path) };
                 };
             }
-            if (m.item("Stash Changes…", .{})) act = .{ .stash_files = ch.path };
+            if (m.item("Stash Changes…", .{})) act = .{ .stash_files = s.targets(c, ch.path) };
         }
         return act;
     }

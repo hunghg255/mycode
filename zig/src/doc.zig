@@ -54,6 +54,8 @@ pub const Doc = struct {
     /// Conflict blocks, found again as the text changes.
     blocks: []conflicts.Block = &.{},
     blocks_version: u64 = std.math.maxInt(u64),
+    /// The change whose HEAD lines show in a box (a gutter mark clicked).
+    peek: ?usize = null,
     /// The lines in view in the last frame.
     first_line: usize = 0,
     last_line: usize = 0,
