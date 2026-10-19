@@ -75,6 +75,7 @@ pub const Cmd = enum {
     appearance_dark,
     toggle_sidebar_right,
     toggle_project_tabs,
+    toggle_project_icons,
     // Go
     quick_open,
     go_to_line,
@@ -220,6 +221,7 @@ pub fn info(cmd: Cmd) Info {
         .appearance_dark => .{ .title = "Appearance: Dark", .menu = "View" },
         .toggle_sidebar_right => .{ .title = "Sidebar on Right", .menu = "View" },
         .toggle_project_tabs => .{ .title = "Project Tabs", .menu = "View" },
+        .toggle_project_icons => .{ .title = "Project Icons", .menu = "View" },
         .quick_open => .{ .title = "Go to File…", .accel = "CmdOrCtrl+P", .menu = "Go" },
         .go_to_line => .{ .title = "Go to Line…", .key = "⌃G", .menu = "Go" },
         .go_to_symbol => .{ .title = "Go to Symbol…", .accel = "CmdOrCtrl+Shift+O", .menu = "Go" },

@@ -296,6 +296,7 @@ pub const Shell = struct {
             .appearance_dark => st.setString("appearance", "dark"),
             .toggle_sidebar_right => st.setBool("sidebarRight", !st.s.sidebarRight),
             .toggle_minimap => st.setBool("minimap", !st.s.minimap),
+            .toggle_project_icons => st.setBool("projectIcons", !st.s.projectIcons),
             .toggle_project_tabs => {
                 st.setBool("projectTabs", !st.s.projectTabs);
                 sh.main.regroup();
@@ -382,7 +383,16 @@ pub const Shell = struct {
             const wrap = ui.div(c).row().w(48).h(36).itemsCenter().justifyCenter();
             if (on) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 6 }, .width = .{ .px = 3 }, .height = .{ .px = 24 }, .radius = 2, .background = t.text }, .none, null);
             const sq = ui.div(c).w(34).h(34).center().rounded(8).bg(if (on) t.accent else t.surface_hover).hover(t.accent.alpha(0.6));
-            ui.text(c, initials(c, wb.name()), .{ .size = 13, .weight = .semibold, .color = if (on) t.accent_text else t.text });
+            if (sh.store.s.projectIcons and !wb.logo_read) {
+                wb.logo_read = true;
+                wb.logo = @import("logo.zig").find(sh.gpa, sh.io, wb.root);
+            }
+            const project_logo = if (sh.store.s.projectIcons) wb.logo else null;
+            if (project_logo) |l| {
+                const key = c.print("logo:{s}", .{wb.root});
+                const shown = if (l.svg) ui.svg(c, l.bytes, .{ .width = 22, .height = 22, .key = key }) else ui.image(c, .{ .key = key, .bytes = l.bytes, .max_width = 22, .max_height = 22, .radius = 4 });
+                if (!shown) ui.text(c, initials(c, wb.name()), .{ .size = 13, .weight = .semibold, .color = if (on) t.accent_text else t.text });
+            } else ui.text(c, initials(c, wb.name()), .{ .size = 13, .weight = .semibold, .color = if (on) t.accent_text else t.text });
             if (wb.editors.anyDirty() or wb.bell) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 26, .y = 2 }, .width = .{ .px = 7 }, .height = .{ .px = 7 }, .radius = 4, .background = if (wb.bell) t.accent else t.text }, .none, null);
             const si = sq.interaction();
             sq.end();

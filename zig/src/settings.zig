@@ -26,6 +26,7 @@ pub const Settings = struct {
     filesExclude: []const []const u8 = &.{},
     sidebarRight: bool = false,
     projectTabs: bool = true,
+    projectIcons: bool = false,
     autoSave: bool = true,
     wordWrap: bool = false,
     blame: bool = true,

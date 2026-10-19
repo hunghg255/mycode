@@ -108,6 +108,9 @@ pub const Workbench = struct {
     review_menu: ui.Menu = .{},
     indent_menu: ui.Menu = .{},
     bell: bool = false,
+    /// The project's favicon or logo, read once for the rail.
+    logo: ?@import("logo.zig").Logo = null,
+    logo_read: bool = false,
 
     pub fn create(shell: *Shell, root: []const u8) !*Workbench {
         const gpa = shell.gpa;
@@ -163,6 +166,7 @@ pub const Workbench = struct {
         wb.blame.deinit(wb.gpa);
         wb.gpa.free(wb.syms);
         wb.gpa.free(wb.syms_text);
+        if (wb.logo) |l| wb.gpa.free(l.bytes);
         wb.gpa.free(wb.root);
         wb.gpa.destroy(wb);
     }
