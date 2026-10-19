@@ -218,6 +218,7 @@ fn makeTerm(wb: *Workbench, profile: ?usize, dir: []const u8) ?*Term {
         .dir = dir,
         .profile = if (pi < profiles.len) profiles[pi] else null,
         .font_size = if (s.terminalFontSize > 0) s.terminalFontSize else s.fontSize - 0.5,
+        .copy_on_select = s.terminalCopyOnSelect,
     }) catch |err| {
         wb.panel.err = @errorName(err);
         wb.panel.open = true;

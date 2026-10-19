@@ -44,6 +44,8 @@ pub const Shell = struct {
     rain: @import("rain.zig").Rain = .{},
     /// The window has the keyboard (the rain moves only then).
     has_focus: bool = true,
+    /// Where the pointer was last seen over the window (where files dropped).
+    last_mouse: ui.Point = .{ .x = -1, .y = -1 },
 
     pub fn create(main: *Main) !*Shell {
         const sh = try main.gpa.create(Shell);
@@ -336,6 +338,7 @@ pub const Shell = struct {
     }
 
     pub fn view(sh: *Shell, c: *ui.Context) void {
+        if (c.input.mouse.x > -1e5) sh.last_mouse = c.input.mouse;
         if (sh.store.reload()) {}
         sh.applyTheme(c);
         sh.updateTitle();
@@ -535,6 +538,15 @@ pub const Shell = struct {
     }
 
     pub fn onDrop(sh: *Shell, w: *myzig.Window, paths: []const []const u8) void {
+        // On a terminal, the paths are typed into it.
+        if (sh.active()) |wb| {
+            const m = sh.last_mouse;
+            for (wb.panel.terms.items) |t| if (wb.panel.open and t.rect != null and t.rect.?.contains(m)) return t.typePaths(paths);
+            for (wb.editors.cols.items) |col| if (col.current()) |it| switch (it.body) {
+                .terminal => |t| if (t.rect != null and t.rect.?.contains(m)) return t.typePaths(paths),
+                else => {},
+            };
+        }
         for (paths) |p| {
             if (fs.isDirectory(sh.io, p)) {
                 sh.openFolder(p, false);

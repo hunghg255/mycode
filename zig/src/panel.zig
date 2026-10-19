@@ -47,6 +47,8 @@ pub const Term = struct {
     dir: []u8,
     argv: [][]const u8,
     exited: bool = false,
+    /// Where it was drawn last, for files dropped on it.
+    rect: ?ui.Rect = null,
     /// Rang its bell or asked for attention while out of sight.
     bell: bool = false,
     focus: bool = true,
@@ -55,6 +57,7 @@ pub const Term = struct {
         dir: []const u8,
         profile: ?Profile = null,
         font_size: f32 = 13,
+        copy_on_select: bool = true,
     };
 
     pub fn create(gpa: std.mem.Allocator, io: std.Io, host: *Host, opts: Options) !*Term {
@@ -77,6 +80,9 @@ pub const Term = struct {
             .on_event = .{ .ctx = term, .func = onEvent },
             .open_link = openLink,
             .open_link_ctx = term,
+            .copy_on_select = opts.copy_on_select,
+            .read_clipboard = readClipboard,
+            .read_clipboard_ctx = term,
         });
         return term;
     }
@@ -112,6 +118,37 @@ pub const Term = struct {
         if (term.host.window) |w| w.redraw();
     }
 
+    /// What a paste pastes: the clipboard's text; with only a picture on it
+    /// an empty bracketed paste, as VS Code's terminal sends, so that Claude
+    /// Code reads the picture itself; files copied, as their quoted paths.
+    fn readClipboard(ctx: ?*anyopaque, gpa: std.mem.Allocator) ?[]u8 {
+        const term: *Term = @ptrCast(@alignCast(ctx.?));
+        if (myzig.clipboard.readText(gpa) catch null) |text| {
+            if (text.len > 0) return text;
+            gpa.free(text);
+        }
+        if (myzig.clipboard.readFiles(gpa) catch null) |files| {
+            defer {
+                for (files) |f| gpa.free(f);
+                gpa.free(files);
+            }
+            return quotePaths(gpa, files) catch null;
+        }
+        if (myzig.clipboard.readImage(gpa) catch null) |img| {
+            gpa.free(img);
+            term.t.paste("");
+        }
+        return null;
+    }
+
+    /// Types paths into the program, each quoted for the shell.
+    pub fn typePaths(term: *Term, paths: []const []const u8) void {
+        const s = quotePaths(term.gpa, paths) catch return;
+        defer term.gpa.free(s);
+        term.t.paste(s);
+        term.focus = true;
+    }
+
     fn openLink(ctx: ?*anyopaque, link: []const u8, path: bool) bool {
         const term: *Term = @ptrCast(@alignCast(ctx.?));
         return term.host.open_link(term.host.ctx, link, path);
@@ -120,7 +157,10 @@ pub const Term = struct {
     pub fn view(term: *Term, c: *ui.Context) void {
         c.keyed(term);
         const box = ui.div(c).wFull().grow();
-        defer box.end();
+        defer {
+            if (box.interaction().rect) |r| term.rect = r;
+            box.end();
+        }
         terminal.view(c, term.t, .{ .autofocus = term.focus });
         term.focus = false;
         term.bell = false;
@@ -261,4 +301,30 @@ pub fn smallButton(c: *ui.Context, icon: []const u8, on: bool) bool {
     const clicked = b.clicked();
     b.end();
     return clicked;
+}
+
+/// Paths joined by spaces, each in double quotes when it needs them.
+pub fn quotePaths(gpa: std.mem.Allocator, paths: []const []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    for (paths, 0..) |p, i| {
+        if (i > 0) try out.append(gpa, ' ');
+        const plain = std.mem.indexOfAny(u8, p, " \t'\"&()[]{};$`") == null;
+        if (plain) try out.appendSlice(gpa, p) else {
+            try out.append(gpa, '"');
+            for (p) |ch| {
+                if (ch == '"') try out.append(gpa, '\\');
+                try out.append(gpa, ch);
+            }
+            try out.append(gpa, '"');
+        }
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+test quotePaths {
+    const gpa = std.testing.allocator;
+    const s = try quotePaths(gpa, &.{ "C:\\a\\b.txt", "C:\\My Files\\c.png" });
+    defer gpa.free(s);
+    try std.testing.expectEqualStrings("C:\\a\\b.txt \"C:\\My Files\\c.png\"", s);
 }
