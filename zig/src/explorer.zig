@@ -19,6 +19,8 @@ pub const Event = union(enum) {
     trash: []const u8,
     open_changes: []const u8,
     open_terminal: []const u8,
+    /// Files copied (in File Explorer, or here) pasted into a folder.
+    paste: []const u8,
 };
 
 pub const Explorer = struct {
@@ -40,6 +42,8 @@ pub const Explorer = struct {
     /// settings.filesExclude.
     excludes: []const []const u8 = &.{},
     menu: ui.Menu = .{},
+    /// The menu of the space below the files: the workspace's.
+    space_menu: ui.Menu = .{},
     menu_path: []const u8 = "",
     focused: bool = false,
 
@@ -229,6 +233,9 @@ pub const Explorer = struct {
         const t = c.theme;
         var ev: Event = .none;
         const roots = e.children(e.root);
+        // The tree in a box of its own: a click on the space below the files
+        // lets go of the file chosen, a right click there is the workspace's menu.
+        const area = ui.div(c).column().wFull().grow();
         var rows = ui.outline([]const u8, c, &e.state, roots, e, .{ .row_height = 22, .indent = 12, .padding = .xy(0, 2) });
         while (rows.next()) |r| {
             const dir = e.dirs.contains(r.item);
@@ -275,6 +282,8 @@ pub const Explorer = struct {
                 if (m.item("Reveal in File Explorer", .{})) myzig.shell.showInFolder(r.item);
                 if (m.item("Open in Terminal", .{})) ev = .{ .open_terminal = folder };
                 m.separator();
+                if (m.item("Copy", .{ .shortcut = ui.keys.label("⌘C") })) myzig.clipboard.writeFiles(e.gpa, &.{r.item}) catch {};
+                if (m.item("Paste", .{ .shortcut = ui.keys.label("⌘V") })) ev = .{ .paste = folder };
                 if (m.item("Copy Path", .{})) _ = myzig.clipboard.writeText(r.item);
                 if (m.item("Copy Relative Path", .{})) {
                     const rel = c.print("{s}", .{fs.relative(e.root, r.item)});
@@ -287,6 +296,22 @@ pub const Explorer = struct {
             }
         }
         const res = rows.end();
+        const ai = area.interaction();
+        area.end();
+        if (ai.clicked and ev == .none) {
+            e.state.selected = null;
+            c.changed = true;
+        }
+        if (ui.contextMenu(c, &e.space_menu, ai)) |m| {
+            defer m.end();
+            if (m.item("New File…", .{})) ev = .{ .new_file = e.root };
+            if (m.item("New Folder…", .{})) ev = .{ .new_folder = e.root };
+            m.separator();
+            if (m.item("Reveal in File Explorer", .{})) myzig.shell.showInFolder(e.root);
+            if (m.item("Open in Terminal", .{})) ev = .{ .open_terminal = e.root };
+            m.separator();
+            if (m.item("Paste", .{ .shortcut = ui.keys.label("⌘V") })) ev = .{ .paste = e.root };
+        }
         e.focused = res.focused;
         if (e.state.selected) |sel| {
             if (res.submitted and !e.dirs.contains(sel)) ev = .{ .open = .{ .path = sel, .preview = false } };
@@ -294,6 +319,8 @@ pub const Explorer = struct {
                 if (c.shortcut(.{ .key = ui.Shortcut.f1 + 1 })) ev = .{ .rename = sel };
                 if (c.shortcut(.{ .key = ui.Shortcut.delete })) ev = .{ .trash = sel };
                 if (c.shortcut(.{ .key = ui.Shortcut.escape })) e.state.selected = null;
+                if (c.shortcut(.{ .key = 'c', .cmd = true })) myzig.clipboard.writeFiles(e.gpa, &.{sel}) catch {};
+                if (c.shortcut(.{ .key = 'v', .cmd = true })) ev = .{ .paste = if (e.dirs.contains(sel)) sel else std.fs.path.dirname(sel) orelse e.root };
             }
         }
         return ev;

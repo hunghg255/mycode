@@ -27,6 +27,62 @@ pub fn explorerEvent(wb: *Workbench, c: *ui.Context, ev: explorer_mod.Event) voi
         .trash => |p| wb.ask(.trash, p, c.print("Delete “{s}”?", .{std.fs.path.basename(p)}), "It goes to the Recycle Bin.", &.{ "Cancel", "Delete" }),
         .open_changes => |p| wbgit.openChangesTab(wb, p, true),
         .open_terminal => |dir| newTerminalAt(wb, dir),
+        .paste => |dir| pasteFiles(wb, dir),
+    }
+}
+
+/// Copies the files on the clipboard into a folder; a name taken gets
+/// " copy" (then " copy 2"...) before its extension.
+fn pasteFiles(wb: *Workbench, dir: []const u8) void {
+    const files = (myzig.clipboard.readFiles(wb.gpa) catch null) orelse return;
+    defer {
+        for (files) |f| wb.gpa.free(f);
+        wb.gpa.free(files);
+    }
+    var last: ?[]u8 = null;
+    defer if (last) |l| wb.gpa.free(l);
+    for (files) |src| {
+        const to = freeName(wb, dir, std.fs.path.basename(src)) orelse continue;
+        copyTree(wb, src, to) catch |err| {
+            wb.toastError("Couldn't paste", @errorName(err));
+            wb.gpa.free(to);
+            continue;
+        };
+        if (last) |l| wb.gpa.free(l);
+        last = to;
+    }
+    wb.explorer.refresh();
+    if (last) |l| wb.explorer.reveal(l);
+}
+
+fn freeName(wb: *Workbench, dir: []const u8, name: []const u8) ?[]u8 {
+    const first = std.fs.path.join(wb.gpa, &.{ dir, name }) catch return null;
+    if (!fs.exists(wb.io, first)) return first;
+    wb.gpa.free(first);
+    const ext = std.fs.path.extension(name);
+    const stem = name[0 .. name.len - ext.len];
+    var n: usize = 1;
+    while (n < 100) : (n += 1) {
+        const candidate = if (n == 1)
+            std.fmt.allocPrint(wb.gpa, "{s}{c}{s} copy{s}", .{ dir, std.fs.path.sep, stem, ext }) catch return null
+        else
+            std.fmt.allocPrint(wb.gpa, "{s}{c}{s} copy {d}{s}", .{ dir, std.fs.path.sep, stem, n, ext }) catch return null;
+        if (!fs.exists(wb.io, candidate)) return candidate;
+        wb.gpa.free(candidate);
+    }
+    return null;
+}
+
+fn copyTree(wb: *Workbench, src: []const u8, dst: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    if (!fs.isDirectory(wb.io, src)) return cwd.copyFile(src, cwd, dst, wb.io, .{});
+    try cwd.createDirPath(wb.io, dst);
+    const list = try fs.list(wb.gpa, wb.io, src);
+    defer fs.freeList(wb.gpa, list);
+    for (list) |e| {
+        const to = try std.fs.path.join(wb.gpa, &.{ dst, std.fs.path.basename(e.path) });
+        defer wb.gpa.free(to);
+        try copyTree(wb, e.path, to);
     }
 }
 
