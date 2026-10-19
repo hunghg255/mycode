@@ -18,8 +18,7 @@ zig-out/bin/mycode.exe <folder> --myzig-snapshot=shot.png --myzig-script="click:
 
 The terminal downloads libghostty-vt and ConPTY into the user's cache the first time it opens, unless they are
 beside the executable: `resources/` holds them for the installer (`ghostty-vt.dll`, `conpty.dll`,
-`OpenConsole.exe`, from `%LOCALAPPDATA%\mygo
-atives`; they are not in Git).
+`OpenConsole.exe`, from `%LOCALAPPDATA%\mygo\natives`; they are not in Git).
 
 ## The installer
 
