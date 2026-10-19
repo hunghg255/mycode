@@ -164,6 +164,8 @@ pub const Graph = struct {
             ui.text(c, shortAge(c, cm.age), .{ .size = 11, .color = t.muted });
             const ri = row.interaction();
             row.end();
+            // Its author, hash, and every branch and tag.
+            ui.tooltip(c, ri, if (cm.refs.len > 0) c.print("{s}\n{s}\n{s}\n{s}", .{ cm.subject, cm.author, cm.hash, cm.refs }) else c.print("{s}\n{s}\n{s}", .{ cm.subject, cm.author, cm.hash }));
             if (ri.double_clicked) ev = .{ .keep = cm.hash } else if (ri.clicked) ev = .{ .open = cm.hash };
             if (ui.contextMenu(c, &g.menu, ri)) |m| {
                 defer m.end();

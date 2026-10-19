@@ -55,6 +55,12 @@ pub fn keys(wb: *Workbench, c: *ui.Context) void {
         if (c.shortcut(.{ .key = 'r', .ctrl = true })) return run_mod.run(wb, c, .open_recent);
         var n: u21 = 1;
         while (n <= 9) : (n += 1) {
+            // Ctrl+Alt+N shows the Nth project (⌃⌘N on macOS).
+            if (c.shortcut(.{ .key = '0' + n, .cmd = true, .alt = !ui.keys.mac, .ctrl = ui.keys.mac })) {
+                wb.shell.show(n - 1);
+                c.changed = true;
+                return;
+            }
             if (c.shortcut(.{ .key = '0' + n, .cmd = true })) {
                 const ci = n - 1;
                 if (ci < wb.editors.cols.items.len) {

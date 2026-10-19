@@ -397,12 +397,14 @@ pub const Shell = struct {
             const si = sq.interaction();
             sq.end();
             wrap.end();
+            ui.tooltip(c, si, if (i < 9) c.print("{s}\n{s}\n{s}", .{ wb.name(), wb.root, c.print("Ctrl+Alt+{d}", .{i + 1}) }) else c.print("{s}\n{s}", .{ wb.name(), wb.root }));
             if (si.clicked) go = i;
             if (ui.contextMenu(c, &sh.rail_menu, si)) |m| {
                 defer m.end();
                 sh.rail_at = i;
                 if (m.item("Reveal in File Explorer", .{})) myzig.shell.showInFolder(wb.root);
                 if (m.item("Copy Path", .{})) _ = myzig.clipboard.writeText(wb.root);
+                if (m.item("Project Icons", .{ .checked = sh.store.s.projectIcons })) sh.store.setBool("projectIcons", !sh.store.s.projectIcons);
                 if (i > 0) if (m.item("Move Up", .{})) std.mem.swap(*Workbench, &sh.projects.items[i], &sh.projects.items[i - 1]);
                 if (i + 1 < sh.projects.items.len) if (m.item("Move Down", .{})) std.mem.swap(*Workbench, &sh.projects.items[i], &sh.projects.items[i + 1]);
                 m.separator();

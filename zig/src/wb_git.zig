@@ -356,6 +356,11 @@ fn deleteBranch(wb: *Workbench, name: []const u8, force: bool, upstream_too: boo
         slow(wb, .delete_remote_branch, &.{ "push", name[0..slash], "--delete", name[slash + 1 ..] }, name);
         return;
     }
+    // Its upstream (origin/name), before the branch and its config go.
+    var ref_buf: [512]u8 = undefined;
+    const up_ref = std.fmt.bufPrint(&ref_buf, "{s}@{{upstream}}", .{name}) catch "";
+    const upstream = if (upstream_too) git.line(wb.gpa, wb.io, t, &.{ "rev-parse", "--abbrev-ref", up_ref }) else null;
+    defer if (upstream) |u| wb.gpa.free(u);
     const r = git.run(wb.gpa, wb.io, t, &.{ "branch", if (force) "-D" else "-d", name }) catch return;
     defer r.deinit(wb.gpa);
     if (!r.ok) {
@@ -369,10 +374,9 @@ fn deleteBranch(wb: *Workbench, name: []const u8, force: bool, upstream_too: boo
         wb.restore_branch.print(wb.gpa, "{s}\x00{s}", .{ name, a }) catch {};
         wb.toast_restore_branch = wb.toasts.showAction("Branch deleted", "Undo");
     }
-    if (upstream_too) {
-        const up = git.line(wb.gpa, wb.io, t, &.{ "config", "--get", "branch.placeholder.remote" });
-        if (up) |u| wb.gpa.free(u);
-    }
+    if (upstream) |u| if (std.mem.indexOfScalar(u8, u, '/')) |slash| {
+        slow(wb, .delete_remote_branch, &.{ "push", u[0..slash], "--delete", u[slash + 1 ..] }, u);
+    };
     wb.refreshGit();
 }
 
@@ -405,7 +409,10 @@ pub fn pickerEvent(wb: *Workbench, c: *ui.Context, pick: @import("branches.zig")
             } else slow(wb, .checkout, &.{ "checkout", b.name }, b.name);
         },
         .create => |n| slow(wb, .create_branch, &.{ "checkout", "-b", n }, n),
-        .delete => |b| wb.ask(.delete_branch, b.name, c.print("Delete the branch “{s}”?", .{b.name}), if (b.remote) "It is deleted on its remote." else "The toast's Undo brings it back.", &.{ "Cancel", "Delete" }),
+        .delete => |b| if (!b.remote and b.upstream.len > 0)
+            wb.ask(.delete_branch, b.name, c.print("Delete the branch “{s}”?", .{b.name}), c.print("Its upstream, {s}, can go too, on its remote. The toast's Undo brings the local branch back.", .{b.upstream}), &.{ "Cancel", "Delete", "Delete with Upstream" })
+        else
+            wb.ask(.delete_branch, b.name, c.print("Delete the branch “{s}”?", .{b.name}), if (b.remote) "It is deleted on its remote." else "The toast's Undo brings it back.", &.{ "Cancel", "Delete" }),
         .rename => |b| wb.prompt.ask(.rename_branch, "Rename the branch", b.name, b.name),
         .stash => |s| switch (s.mode) {
             .stash_apply => slow(wb, .stash_apply, &.{ "stash", "apply", "--index", s.name }, s.name),
