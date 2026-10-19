@@ -35,7 +35,7 @@ pub const Item = struct {
             .file => |d| d.name(),
             .image => |im| std.fs.path.basename(im.path),
             .changes => "Changes",
-            .commit => |cv| c.print("{s} {s}", .{ cv.hash[0..@min(7, cv.hash.len)], cv.subject() }),
+            .commit => |cv| if (std.mem.startsWith(u8, cv.hash, "stash@")) cv.hash else c.print("{s} {s}", .{ cv.hash[0..@min(7, cv.hash.len)], cv.subject() }),
             .terminal => |t| t.name(),
         };
     }

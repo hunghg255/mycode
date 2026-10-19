@@ -10,6 +10,8 @@ pub const Changes = struct {
     list: DiffList,
     /// The status it was made of, to make it again only when that changed.
     seen: u64 = 0,
+    /// The open files' versions it last followed.
+    versions: u64 = 0,
 
     pub fn create(gpa: std.mem.Allocator) !*Changes {
         const ch = try gpa.create(Changes);

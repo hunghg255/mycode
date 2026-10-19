@@ -162,6 +162,16 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
         .image => |im| im.view(c),
         .changes => |ch| {
             ch.rebuild(wb.scm.changes, wb.scm.generation);
+            // The diff follows the open files as they are typed.
+            var versions: u64 = 0;
+            for (wb.editors.cols.items) |cc| for (cc.items.items) |o| switch (o.body) {
+                .file => |d| versions +%= d.editor.area.doc.version *% @intFromPtr(d),
+                else => {},
+            };
+            if (versions != ch.versions) {
+                ch.versions = versions;
+                ch.list.follow(wbgit.reader(wb));
+            }
             ch.list.layout = if (std.mem.eql(u8, wb.shell.store.s.diffLayout, "split")) .split else if (std.mem.eql(u8, wb.shell.store.s.diffLayout, "inline")) .inline_ else ch.list.layout;
             wbgit.diffEvent(wb, c, &ch.list, ch.list.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette)));
         },
@@ -256,7 +266,7 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
         if (b.clicked()) d.editor.goToLine(sy.line + 1);
         b.end();
     };
-    const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight });
+    const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight, .weight = weightOf(s.fontWeight) });
     d.first_line = r.first_line;
     d.last_line = r.last_line;
     // A mark clicked in the gutter shows the change as HEAD had it.
@@ -394,6 +404,11 @@ fn reviewStrip(wb: *Workbench, c: *ui.Context, d: *Doc, rel: []const u8) void {
     if (remove) |i| wb.review.remove(i);
 }
 
+/// fontWeight (100 to 900) as a weight of the font.
+fn weightOf(w: f32) @FieldType(ui.TextStyle, "weight") {
+    return if (w >= 650) .bold else if (w >= 550) .semibold else if (w >= 450) .medium else .regular;
+}
+
 /// What shows after lines' ends: the caret line's blame, and each review
 /// comment after its last line.
 fn notes(wb: *Workbench, c: *ui.Context, d: *Doc, rel: []const u8) void {
@@ -465,7 +480,8 @@ fn welcome(wb: *Workbench, c: *ui.Context) void {
             const row = ui.div(c).row().w(320).h(24).px(8).gap(8).itemsCenter().rounded(4).hover(t.surface_hover);
             ui.text(c, std.fs.path.basename(r), .{ .size = 13, .color = t.accent });
             ui.text(c, r, .{ .size = 11, .color = t.muted });
-            if (row.clicked()) wb.shell.openFolder(r, false);
+            // Ctrl+click (⌘ on macOS): in a new window.
+            if (row.clicked()) wb.shell.openFolder(r, c.input.ctrl or c.input.cmd);
             row.end();
         }
     }

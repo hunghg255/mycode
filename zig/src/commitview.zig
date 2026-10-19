@@ -35,7 +35,13 @@ pub const CommitView = struct {
         cv.refs = try gpa.dupe(u8, it.next() orelse "");
         cv.message = try gpa.dupe(u8, std.mem.trim(u8, it.rest(), " \n"));
         // The files, from the first parent (or none, for a root commit).
-        const files = try git.run(gpa, io, top, &.{ "diff-tree", "--no-commit-id", "-r", "-M", "--root", "--name-status", "-z", rev });
+        const stash = std.mem.indexOf(u8, rev, "stash@") != null;
+        var first_parent: [96]u8 = undefined;
+        const parent = std.fmt.bufPrint(&first_parent, "{s}^1", .{rev}) catch rev;
+        const files = if (stash)
+            try git.run(gpa, io, top, &.{ "diff-tree", "-r", "-M", "--name-status", "-z", parent, rev })
+        else
+            try git.run(gpa, io, top, &.{ "diff-tree", "--no-commit-id", "-r", "-M", "--root", "--name-status", "-z", rev });
         defer files.deinit(gpa);
         var fit = std.mem.splitScalar(u8, files.stdout, 0);
         var buf: [std.fs.max_path_bytes + 80]u8 = undefined;

@@ -145,6 +145,26 @@ pub const DiffList = struct {
         for (dl.entries.items) |*e| if (e.loaded) dl.load(e, r);
     }
 
+    /// Reads again the work tree's side of the entries showing it: the
+    /// diff follows a file as it is typed.
+    pub fn follow(dl: *DiffList, r: Reader) void {
+        for (dl.entries.items) |*e| if (e.loaded and std.mem.eql(u8, e.new_spec, "@")) {
+            const new = r.read(r.ctx, dl.gpa, e.new_spec, e.path);
+            if (std.mem.eql(u8, new, e.new_text)) {
+                dl.gpa.free(new);
+                continue;
+            }
+            dl.gpa.free(e.new_text);
+            e.new_text = new;
+            if (e.dv) |*d| {
+                d.set(e.old_text, new) catch {};
+                const st = d.stats();
+                e.added = st.added;
+                e.deleted = st.deleted;
+            }
+        };
+    }
+
     pub fn load(dl: *DiffList, e: *Entry, r: Reader) void {
         const old = r.read(r.ctx, dl.gpa, e.old_spec, e.path);
         const new = r.read(r.ctx, dl.gpa, e.new_spec, e.path);

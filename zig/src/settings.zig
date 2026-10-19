@@ -14,6 +14,7 @@ pub const Profile = struct {
 pub const Settings = struct {
     fontFamily: []const u8 = "monospace",
     fontSize: f32 = 13,
+    fontWeight: f32 = 400,
     lineHeight: f32 = 1.55,
     terminalFontSize: f32 = 0,
     terminalCopyOnSelect: bool = true,
