@@ -6,6 +6,8 @@
     .dependencies = .{
         .myzig = .{ .path = "../../myzig" },
         .myzig_terminal = .{ .path = "../../myzig/plugins/terminal" },
+        .myzig_watch = .{ .path = "../../myzig/plugins/watch" },
+        .mainthread = .{ .path = "../../myzig/plugins/mainthread" },
     },
     .paths = .{
         "build.zig",

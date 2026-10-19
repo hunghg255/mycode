@@ -1,135 +1,192 @@
-//! The bottom panel: terminals running the user's shell in the workspace's
-//! folder, through the myzig terminal plugin (Ghostty's emulator).
+//! Terminals, through the myzig terminal plugin (Ghostty's emulator, ConPTY
+//! on Windows): `Term` is one, shown in the bottom panel or in a column's
+//! tab; `Panel` is the bottom panel with its chips, profiles and buttons.
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const terminal = @import("terminal");
+const Profile = @import("termprofiles.zig").Profile;
 
-pub const Panel = struct {
-    gpa: std.mem.Allocator,
-    io: std.Io,
-    root: []const u8,
+/// What terminals report to: the window to redraw, links Ctrl+click opens.
+pub const Host = struct {
     window: ?*myzig.Window = null,
-    terms: std.ArrayList(*Term) = .empty,
-    active: usize = 0,
-    open: bool = false,
-    height: f32 = 260,
-    /// The libraries are downloaded once into the user's cache, off the main thread.
+    ctx: *anyopaque,
+    open_link: *const fn (ctx: *anyopaque, link: []const u8, path: bool) bool,
+    /// The libraries are downloaded once into the user's cache, off the main
+    /// thread: 0 while, 1 done, 2 failed.
     ready: std.atomic.Value(u8) = .init(0),
-    err: ?[]const u8 = null,
-    focus_term: bool = false,
 
-    const Term = struct {
-        panel: *Panel,
-        t: *terminal.Terminal,
-        title: [64]u8 = undefined,
-        title_len: usize = 0,
-        exited: bool = false,
-    };
-
-    pub fn deinit(p: *Panel) void {
-        for (p.terms.items) |t| {
-            t.t.destroy();
-            p.gpa.destroy(t);
-        }
-        p.terms.deinit(p.gpa);
-    }
-
-    /// Fetches libghostty-vt (and ConPTY on Windows) when missing, on a thread.
-    pub fn prepare(p: *Panel) void {
-        const th = std.Thread.spawn(.{}, fetch, .{p}) catch {
-            p.ready.store(2, .release);
+    pub fn prepare(h: *Host, gpa: std.mem.Allocator, io: std.Io) void {
+        const th = std.Thread.spawn(.{}, fetch, .{ h, gpa, io }) catch {
+            h.ready.store(2, .release);
             return;
         };
         th.detach();
     }
 
-    fn fetch(p: *Panel) void {
-        terminal.download.fetchAll(p.gpa, p.io) catch |err| {
+    fn fetch(h: *Host, gpa: std.mem.Allocator, io: std.Io) void {
+        terminal.download.fetchAll(gpa, io) catch |err| {
             std.log.warn("terminal: {s}", .{@errorName(err)});
-            p.ready.store(2, .release);
-            if (p.window) |w| w.redraw();
+            h.ready.store(2, .release);
+            if (h.window) |w| w.redraw();
             return;
         };
-        p.ready.store(1, .release);
-        if (p.window) |w| w.redraw();
+        h.ready.store(1, .release);
+        if (h.window) |w| w.redraw();
     }
+};
 
-    pub fn toggle(p: *Panel) void {
-        p.open = !p.open;
-        if (p.open and p.terms.items.len == 0) p.newTerminal();
-        p.focus_term = p.open;
-    }
+pub const Term = struct {
+    gpa: std.mem.Allocator,
+    host: *Host,
+    t: *terminal.Terminal,
+    title_buf: [64]u8 = undefined,
+    title_len: usize = 0,
+    profile_buf: [32]u8 = undefined,
+    profile_len: usize = 0,
+    dir: []u8,
+    argv: [][]const u8,
+    exited: bool = false,
+    /// Rang its bell or asked for attention while out of sight.
+    bell: bool = false,
+    focus: bool = true,
 
-    pub fn newTerminal(p: *Panel) void {
-        p.open = true;
-        if (p.ready.load(.acquire) == 0) return; // started once the libraries are there
-        const term = p.gpa.create(Term) catch return;
-        term.* = .{ .panel = p, .t = undefined };
-        term.t = terminal.Terminal.create(p.gpa, p.io, .{
-            .dir = p.root,
+    pub const Options = struct {
+        dir: []const u8,
+        profile: ?Profile = null,
+        font_size: f32 = 13,
+    };
+
+    pub fn create(gpa: std.mem.Allocator, io: std.Io, host: *Host, opts: Options) !*Term {
+        const term = try gpa.create(Term);
+        errdefer gpa.destroy(term);
+        term.* = .{ .gpa = gpa, .host = host, .t = undefined, .dir = try gpa.dupe(u8, opts.dir), .argv = &.{} };
+        errdefer gpa.free(term.dir);
+        if (opts.profile) |p| {
+            term.argv = try gpa.alloc([]const u8, p.args.len + 1);
+            term.argv[0] = try gpa.dupe(u8, p.path);
+            for (p.args, 1..) |a, i| term.argv[i] = try gpa.dupe(u8, a);
+            const n = @min(p.name.len, term.profile_buf.len);
+            @memcpy(term.profile_buf[0..n], p.name[0..n]);
+            term.profile_len = n;
+        }
+        term.t = try terminal.Terminal.create(gpa, io, .{
+            .command = term.argv,
+            .dir = term.dir,
+            .font_size = opts.font_size,
             .on_event = .{ .ctx = term, .func = onEvent },
-        }) catch |err| {
-            p.err = @errorName(err);
-            p.gpa.destroy(term);
-            return;
-        };
-        p.terms.append(p.gpa, term) catch {
-            term.t.destroy();
-            p.gpa.destroy(term);
-            return;
-        };
-        p.active = p.terms.items.len - 1;
-        p.focus_term = true;
+            .open_link = openLink,
+            .open_link_ctx = term,
+        });
+        return term;
+    }
+
+    pub fn destroy(term: *Term) void {
+        term.t.destroy();
+        for (term.argv) |a| term.gpa.free(a);
+        term.gpa.free(term.argv);
+        term.gpa.free(term.dir);
+        term.gpa.destroy(term);
+    }
+
+    pub fn name(term: *const Term) []const u8 {
+        if (term.title_len > 0) return term.title_buf[0..term.title_len];
+        if (term.profile_len > 0) return term.profile_buf[0..term.profile_len];
+        return "Terminal";
     }
 
     fn onEvent(ctx: ?*anyopaque, t: *terminal.Terminal, ev: terminal.Event) void {
         const term: *Term = @ptrCast(@alignCast(ctx.?));
-        const p = term.panel;
         switch (ev) {
-            .output, .bell => {},
+            .output => {},
+            .bell => term.bell = true,
             .title => {
-                const title = t.title(p.gpa) catch return;
-                defer p.gpa.free(title);
-                const n = @min(title.len, term.title.len);
-                @memcpy(term.title[0..n], title[0..n]);
+                const title = t.title(term.gpa) catch return;
+                defer term.gpa.free(title);
+                const n = @min(title.len, term.title_buf.len);
+                @memcpy(term.title_buf[0..n], title[0..n]);
                 term.title_len = n;
             },
             .exit => term.exited = true,
         }
-        if (p.window) |w| w.redraw();
+        if (term.host.window) |w| w.redraw();
     }
 
-    fn closeAt(p: *Panel, i: usize) void {
-        const term = p.terms.orderedRemove(i);
-        term.t.destroy();
-        p.gpa.destroy(term);
+    fn openLink(ctx: ?*anyopaque, link: []const u8, path: bool) bool {
+        const term: *Term = @ptrCast(@alignCast(ctx.?));
+        return term.host.open_link(term.host.ctx, link, path);
+    }
+
+    pub fn view(term: *Term, c: *ui.Context) void {
+        c.keyed(term);
+        const box = ui.div(c).wFull().grow();
+        defer box.end();
+        terminal.view(c, term.t, .{ .autofocus = term.focus });
+        term.focus = false;
+        term.bell = false;
+    }
+};
+
+pub const Panel = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    host: *Host,
+    terms: std.ArrayList(*Term) = .empty,
+    active: usize = 0,
+    open: bool = false,
+    maximized: bool = false,
+    height: f32 = 260,
+    err: ?[]const u8 = null,
+    profile_menu: ui.Menu = .{},
+    chip_menu: ui.Menu = .{},
+    chip_at: usize = 0,
+    /// Asked of the workbench: a new terminal (of a profile), a move to a column.
+    request: ?Request = null,
+
+    pub const Request = union(enum) { new: ?usize, to_column: *Term, set_default: usize };
+
+    pub fn deinit(p: *Panel) void {
+        for (p.terms.items) |t| t.destroy();
+        p.terms.deinit(p.gpa);
+    }
+
+    pub fn add(p: *Panel, t: *Term) void {
+        p.terms.append(p.gpa, t) catch return;
+        p.active = p.terms.items.len - 1;
+        p.open = true;
+        t.focus = true;
+    }
+
+    pub fn take(p: *Panel, i: usize) *Term {
+        const t = p.terms.orderedRemove(i);
         if (p.active >= p.terms.items.len) p.active = p.terms.items.len -| 1;
         if (p.terms.items.len == 0) p.open = false;
+        return t;
     }
 
-    /// Sends text to the terminal used last, opening one when there is none.
-    pub fn send(p: *Panel, text: []const u8) void {
-        if (p.terms.items.len == 0) p.newTerminal();
-        if (p.terms.items.len == 0) return;
-        p.open = true;
-        p.terms.items[p.active].t.send(text);
+    pub fn current(p: *Panel) ?*Term {
+        if (p.terms.items.len == 0) return null;
+        return p.terms.items[@min(p.active, p.terms.items.len - 1)];
     }
 
-    pub fn view(p: *Panel, c: *ui.Context) void {
+    pub fn cycle(p: *Panel, forward: bool) void {
+        const n = p.terms.items.len;
+        if (n == 0) return;
+        p.active = if (forward) (p.active + 1) % n else (p.active + n - 1) % n;
+        p.terms.items[p.active].focus = true;
+    }
+
+    pub fn view(p: *Panel, c: *ui.Context, profiles: []const Profile, default_profile: usize, chrome: ui.Color) void {
         const t = c.theme;
-        // Terminals whose shell exited go.
         var i: usize = p.terms.items.len;
         while (i > 0) {
             i -= 1;
-            if (p.terms.items[i].exited) p.closeAt(i);
+            if (p.terms.items[i].exited) p.take(i).destroy();
         }
-        if (p.open and p.terms.items.len == 0 and p.ready.load(.acquire) == 1) p.newTerminal();
-
         ui.column(c, .{ .width = .fill, .height = .fill, .background = t.background });
         defer ui.end(c);
         {
-            const bar = ui.div(c).row().wFull().h(30).px(8).gap(4).itemsCenter();
+            const bar = ui.div(c).row().wFull().h(30).px(8).gap(4).itemsCenter().bg(chrome);
             defer bar.end();
             ui.text(c, "TERMINAL", .{ .size = 11, .weight = .semibold, .color = t.muted });
             _ = c.leaf(.{ .width = .{ .px = 8 } }, .none, null);
@@ -138,44 +195,70 @@ pub const Panel = struct {
                 c.keyed(term);
                 const on = k == p.active;
                 const chip = ui.div(c).row().h(22).px(8).gap(6).itemsCenter().rounded(4).bg(if (on) t.surface_hover else .transparent).hover(t.surface_hover);
-                ui.icon(c, "terminal", .{ .size = 11, .color = t.muted });
-                const title = if (term.title_len > 0) term.title[0..term.title_len] else "shell";
-                ui.text(c, c.print("{d}: {s}", .{ k + 1, title }), .{ .size = 12, .color = if (on) t.text else t.muted });
+                ui.icon(c, "terminal", .{ .size = 11, .color = if (term.bell) t.accent else t.muted });
+                ui.text(c, c.print("{d}: {s}", .{ k + 1, term.name() }), .{ .size = 12, .color = if (on) t.text else t.muted });
                 const x = ui.div(c).w(14).h(14).center().rounded(3).hover(t.surface);
                 ui.icon(c, "xmark", .{ .size = 8, .color = t.muted });
                 if (x.clicked()) close_at = k;
                 x.end();
-                if (chip.clicked()) {
-                    p.active = k;
-                    p.focus_term = true;
-                }
+                const ci = chip.interaction();
                 chip.end();
+                if (ci.clicked) {
+                    p.active = k;
+                    term.focus = true;
+                }
+                if (ui.contextMenu(c, &p.chip_menu, ci)) |m| {
+                    defer m.end();
+                    p.chip_at = k;
+                    if (m.item("Move to Editor Column", .{})) p.request = .{ .to_column = term };
+                    if (m.item("Kill Terminal", .{})) close_at = k;
+                }
             }
             if (close_at) |k| {
-                p.closeAt(k);
+                p.take(k).destroy();
                 c.changed = true;
             }
+            if (p.terms.items.len >= 2) {
+                if (smallButton(c, "chevron.up", false)) p.cycle(false);
+                if (smallButton(c, "chevron.down", false)) p.cycle(true);
+            }
             ui.spacer(c);
-            const plus = ui.div(c).w(22).h(22).center().rounded(4).hover(t.surface_hover);
-            ui.icon(c, "plus", .{ .size = 12, .color = t.muted });
-            if (plus.clicked()) p.newTerminal();
-            plus.end();
-            const hide = ui.div(c).w(22).h(22).center().rounded(4).hover(t.surface_hover);
-            ui.icon(c, "xmark", .{ .size = 11, .color = t.muted });
-            if (hide.clicked()) p.open = false;
-            hide.end();
+            if (smallButton(c, "plus", false)) p.request = .{ .new = null };
+            const more = ui.div(c).w(22).h(22).center().rounded(4).hover(t.surface_hover);
+            ui.icon(c, "chevron.down", .{ .size = 10, .color = t.muted });
+            const mi = more.interaction();
+            more.end();
+            if (ui.buttonMenu(c, &p.profile_menu, mi)) |m| {
+                defer m.end();
+                for (profiles, 0..) |pr, k| if (m.item(c.print("New {s}", .{pr.name}), .{})) {
+                    p.request = .{ .new = k };
+                };
+                m.separator();
+                if (m.submenu("Default Profile")) |sub| {
+                    defer sub.end();
+                    for (profiles, 0..) |pr, k| if (sub.item(pr.name, .{ .checked = k == default_profile })) {
+                        p.request = .{ .set_default = k };
+                    };
+                }
+            }
+            if (smallButton(c, if (p.maximized) "chevron.down" else "chevron.up", false)) p.maximized = !p.maximized;
+            if (smallButton(c, "xmark", false)) {
+                p.open = false;
+                p.maximized = false;
+            }
         }
-        switch (p.ready.load(.acquire)) {
+        switch (p.host.ready.load(.acquire)) {
             0 => ui.text(c, "  Downloading the terminal's libraries…", .{ .size = 12, .color = t.muted }),
             2 => ui.text(c, "  The terminal's libraries could not be downloaded. Set MYZIG_GHOSTTY_VT, or put them next to mycode.exe.", .{ .size = 12, .color = t.danger, .wrap = true }),
-            else => if (p.terms.items.len > 0) {
-                const term = p.terms.items[@min(p.active, p.terms.items.len - 1)];
-                c.keyed(term);
-                const box = ui.div(c).wFull().grow();
-                defer box.end();
-                terminal.view(c, term.t, .{ .autofocus = p.focus_term });
-                p.focus_term = false;
-            } else if (p.err) |e| ui.text(c, c.print("  Could not start a shell: {s}", .{e}), .{ .size = 12, .color = t.danger }),
+            else => if (p.current()) |term| term.view(c) else if (p.err) |e| ui.text(c, c.print("  Could not start a shell: {s}", .{e}), .{ .size = 12, .color = t.danger }),
         }
     }
 };
+
+pub fn smallButton(c: *ui.Context, icon: []const u8, on: bool) bool {
+    const b = ui.div(c).w(22).h(22).center().rounded(4).bg(if (on) c.theme.surface_hover else .transparent).hover(c.theme.surface_hover);
+    ui.icon(c, icon, .{ .size = 11, .color = if (on) c.theme.text else c.theme.muted });
+    const clicked = b.clicked();
+    b.end();
+    return clicked;
+}

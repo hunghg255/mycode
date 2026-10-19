@@ -1,0 +1,556 @@
+//! The editor's columns, side by side, each with its own tabs and preview
+//! tab. Tabs hold files, pictures, diffs, commits and terminals. A tab drags
+//! along its strip, into another column, or to a column's right edge for a
+//! new column; a locked column keeps its terminals.
+const std = @import("std");
+const myzig = @import("myzig");
+const ui = myzig.ui;
+const fs = @import("fs.zig");
+const icons = @import("icons.zig");
+const Doc = @import("doc.zig").Doc;
+const viewer = @import("viewer.zig");
+const Changes = @import("changes.zig").Changes;
+const CommitView = @import("commitview.zig").CommitView;
+const Term = @import("panel.zig").Term;
+
+pub const Body = union(enum) {
+    file: *Doc,
+    image: *viewer.Image,
+    changes: *Changes,
+    commit: *CommitView,
+    terminal: *Term,
+};
+
+pub const Item = struct {
+    body: Body,
+    preview: bool = false,
+
+    pub fn title(it: *const Item, c: *ui.Context) []const u8 {
+        return switch (it.body) {
+            .file => |d| d.name(),
+            .image => |im| std.fs.path.basename(im.path),
+            .changes => "Changes",
+            .commit => |cv| c.print("{s} {s}", .{ cv.hash[0..@min(7, cv.hash.len)], cv.subject() }),
+            .terminal => |t| t.name(),
+        };
+    }
+
+    /// The file's path, for a file or a picture.
+    pub fn path(it: *const Item) ?[]const u8 {
+        return switch (it.body) {
+            .file => |d| if (d.path.len > 0) d.path else null,
+            .image => |im| im.path,
+            else => null,
+        };
+    }
+
+    pub fn dirty(it: *const Item) bool {
+        return switch (it.body) {
+            .file => |d| d.dirty(),
+            else => false,
+        };
+    }
+
+    pub fn destroy(it: *Item, gpa: std.mem.Allocator) void {
+        switch (it.body) {
+            .file => |d| d.destroy(),
+            .image => |im| im.destroy(),
+            .changes => |ch| ch.destroy(),
+            .commit => |cv| cv.destroy(),
+            .terminal => |t| t.destroy(),
+        }
+        gpa.destroy(it);
+    }
+};
+
+pub const Column = struct {
+    items: std.ArrayList(*Item) = .empty,
+    active: usize = 0,
+    locked: bool = false,
+    /// Its width in points, but the last column's, which takes the rest.
+    width: f32 = 0,
+
+    pub fn current(col: *Column) ?*Item {
+        if (col.items.items.len == 0) return null;
+        return col.items.items[@min(col.active, col.items.items.len - 1)];
+    }
+};
+
+pub const Loc = struct { col: usize, idx: usize };
+
+const Closed = struct { path: []u8, col: usize, idx: usize, caret: usize };
+
+const Drag = struct { from: Loc, start: ui.Point, moving: bool = false };
+
+pub const Editors = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    cols: std.ArrayList(*Column) = .empty,
+    focus: usize = 0,
+    /// The column files went to last, when a locked column has the keyboard.
+    last_file_col: usize = 0,
+    closed: std.ArrayList(Closed) = .empty,
+    auto_save: bool = true,
+    /// The tab shown changed: the title follows, and auto save saved the last.
+    switched: bool = true,
+    menu: ui.Menu = .{},
+    menu_at: Loc = .{ .col = 0, .idx = 0 },
+    drag: ?Drag = null,
+    /// Each column's strip and body as last laid out, for drops.
+    strip_rects: [16]ui.Rect = undefined,
+    body_rects: [16]ui.Rect = undefined,
+    /// Asked of the workbench by the tab menu.
+    request: ?Request = null,
+
+    pub const Request = union(enum) { reveal: []const u8, open_changes: []const u8, to_panel: *Term, copy_path: []const u8, new_terminal_in: usize };
+
+    pub fn init(gpa: std.mem.Allocator, io: std.Io) Editors {
+        var e: Editors = .{ .gpa = gpa, .io = io };
+        const col = gpa.create(Column) catch @panic("out of memory");
+        col.* = .{};
+        e.cols.append(gpa, col) catch @panic("out of memory");
+        return e;
+    }
+
+    pub fn deinit(e: *Editors) void {
+        for (e.cols.items) |col| {
+            for (col.items.items) |it| it.destroy(e.gpa);
+            col.items.deinit(e.gpa);
+            e.gpa.destroy(col);
+        }
+        e.cols.deinit(e.gpa);
+        for (e.closed.items) |c| e.gpa.free(c.path);
+        e.closed.deinit(e.gpa);
+    }
+
+    pub fn focusCol(e: *Editors) *Column {
+        e.focus = @min(e.focus, e.cols.items.len - 1);
+        return e.cols.items[e.focus];
+    }
+
+    pub fn current(e: *Editors) ?*Item {
+        return e.focusCol().current();
+    }
+
+    pub fn currentDoc(e: *Editors) ?*Doc {
+        const it = e.current() orelse return null;
+        return switch (it.body) {
+            .file => |d| d,
+            else => null,
+        };
+    }
+
+    pub fn currentLoc(e: *Editors) ?Loc {
+        const col = e.focusCol();
+        if (col.items.items.len == 0) return null;
+        return .{ .col = e.focus, .idx = @min(col.active, col.items.items.len - 1) };
+    }
+
+    pub fn at(e: *Editors, l: Loc) *Item {
+        return e.cols.items[l.col].items.items[l.idx];
+    }
+
+    /// Every tab, column by column.
+    pub fn each(e: *Editors, buf: []*Item) []*Item {
+        var n: usize = 0;
+        for (e.cols.items) |col| for (col.items.items) |it| {
+            if (n == buf.len) return buf[0..n];
+            buf[n] = it;
+            n += 1;
+        };
+        return buf[0..n];
+    }
+
+    pub fn findPath(e: *Editors, p: []const u8) ?Loc {
+        // The focused column first.
+        for (e.focusCol().items.items, 0..) |it, i| if (it.path()) |ip| if (std.mem.eql(u8, ip, p)) return .{ .col = e.focus, .idx = i };
+        for (e.cols.items, 0..) |col, ci| for (col.items.items, 0..) |it, i| if (it.path()) |ip| if (std.mem.eql(u8, ip, p)) return .{ .col = ci, .idx = i };
+        return null;
+    }
+
+    pub fn findDoc(e: *Editors, p: []const u8) ?*Doc {
+        const l = e.findPath(p) orelse return null;
+        return switch (e.at(l).body) {
+            .file => |d| d,
+            else => null,
+        };
+    }
+
+    /// Where files open: the column with the keyboard, unless it is locked.
+    pub fn fileColumn(e: *Editors) usize {
+        if (!e.focusCol().locked) return e.focus;
+        if (e.last_file_col < e.cols.items.len and !e.cols.items[e.last_file_col].locked) return e.last_file_col;
+        for (e.cols.items, 0..) |col, i| if (!col.locked) return i;
+        // Every column is locked: one more, unlocked.
+        return e.addColumn(0) catch 0;
+    }
+
+    pub fn addColumn(e: *Editors, at_index: usize) !usize {
+        if (e.cols.items.len >= 16) return error.TooManyColumns;
+        const col = try e.gpa.create(Column);
+        col.* = .{};
+        const i = @min(at_index, e.cols.items.len);
+        try e.cols.insert(e.gpa, i, col);
+        for (e.cols.items) |cc| cc.width = 0; // shared again
+        if (e.focus >= i and e.cols.items.len > 1 and e.focus != i) e.focus += 1;
+        return i;
+    }
+
+    pub fn show(e: *Editors, l: Loc) void {
+        const col = e.cols.items[l.col];
+        if (l.idx >= col.items.items.len) return;
+        if (e.auto_save) if (e.current()) |old| if (old != col.items.items[l.idx]) saveItem(old);
+        col.active = l.idx;
+        e.focus = l.col;
+        if (!col.locked) e.last_file_col = l.col;
+        e.switched = true;
+    }
+
+    /// Adds a tab to a column: a preview takes its preview tab's place.
+    pub fn add(e: *Editors, it: *Item, col_i: usize) !Loc {
+        const col = e.cols.items[col_i];
+        if (it.preview) for (col.items.items, 0..) |o, i| if (o.preview and !o.dirty()) {
+            o.destroy(e.gpa);
+            col.items.items[i] = it;
+            e.show(.{ .col = col_i, .idx = i });
+            return .{ .col = col_i, .idx = i };
+        };
+        const i = if (col.items.items.len == 0) 0 else @min(col.active + 1, col.items.items.len);
+        try col.items.insert(e.gpa, i, it);
+        e.show(.{ .col = col_i, .idx = i });
+        return .{ .col = col_i, .idx = i };
+    }
+
+    pub fn newItem(e: *Editors, body: Body, preview: bool) !*Item {
+        const it = try e.gpa.create(Item);
+        it.* = .{ .body = body, .preview = preview };
+        return it;
+    }
+
+    /// Opens a file (a picture in the viewer), or shows its tab.
+    pub fn openFile(e: *Editors, p: []const u8, preview: bool) !*Item {
+        if (e.findPath(p)) |l| {
+            const it = e.at(l);
+            if (!preview) it.preview = false;
+            e.show(l);
+            return it;
+        }
+        const body: Body = if (viewer.isImage(p))
+            .{ .image = try viewer.Image.create(e.gpa, e.io, p) }
+        else
+            .{ .file = try Doc.create(e.gpa, e.io, p) };
+        const it = try e.newItem(body, preview);
+        errdefer it.destroy(e.gpa);
+        _ = try e.add(it, e.fileColumn());
+        return it;
+    }
+
+    pub fn newUntitled(e: *Editors) !void {
+        const it = try e.newItem(.{ .file = try Doc.create(e.gpa, e.io, "") }, false);
+        _ = try e.add(it, e.fileColumn());
+    }
+
+    fn saveItem(it: *Item) void {
+        switch (it.body) {
+            .file => |d| d.save() catch {},
+            else => {},
+        }
+    }
+
+    pub fn saveAll(e: *Editors) void {
+        for (e.cols.items) |col| for (col.items.items) |it| saveItem(it);
+    }
+
+    pub fn anyDirty(e: *Editors) bool {
+        for (e.cols.items) |col| for (col.items.items) |it| if (it.dirty()) return true;
+        return false;
+    }
+
+    /// Takes a tab out of its column, without freeing it.
+    pub fn take(e: *Editors, l: Loc) *Item {
+        const col = e.cols.items[l.col];
+        const it = col.items.orderedRemove(l.idx);
+        if (col.active > l.idx or col.active >= col.items.items.len) col.active -|= 1;
+        e.switched = true;
+        return it;
+    }
+
+    /// Closes a tab, saving it first when auto save is on, and drops an
+    /// empty extra column.
+    pub fn close(e: *Editors, l: Loc) void {
+        const it = e.at(l);
+        if (e.auto_save) saveItem(it);
+        if (it.path()) |p| {
+            const caret = switch (it.body) {
+                .file => |d| d.editor.area.sel.caret,
+                else => 0,
+            };
+            if (e.gpa.dupe(u8, p)) |dp| {
+                e.closed.append(e.gpa, .{ .path = dp, .col = l.col, .idx = l.idx, .caret = caret }) catch e.gpa.free(dp);
+            } else |_| {}
+        }
+        _ = e.take(l);
+        it.destroy(e.gpa);
+        e.dropEmpty(l.col);
+    }
+
+    /// An empty column goes, unless it is the last, or the last unlocked
+    /// one beside locked ones, or locked (it offers a new terminal).
+    fn dropEmpty(e: *Editors, ci: usize) void {
+        const col = e.cols.items[ci];
+        if (col.items.items.len > 0 or e.cols.items.len == 1 or col.locked) return;
+        var unlocked: usize = 0;
+        for (e.cols.items) |cc| if (!cc.locked) {
+            unlocked += 1;
+        };
+        if (unlocked <= 1) return;
+        col.items.deinit(e.gpa);
+        e.gpa.destroy(col);
+        _ = e.cols.orderedRemove(ci);
+        for (e.cols.items) |cc| cc.width = 0;
+        if (e.focus >= ci) e.focus -|= 1;
+        if (e.last_file_col >= ci) e.last_file_col -|= 1;
+        e.switched = true;
+    }
+
+    pub fn closeColumnIfEmpty(e: *Editors) bool {
+        const col = e.focusCol();
+        if (col.items.items.len > 0 or e.cols.items.len == 1) return false;
+        col.locked = false;
+        e.dropEmpty(e.focus);
+        return true;
+    }
+
+    pub fn closeWhere(e: *Editors, ci: usize, keep: ?*Item, comptime which: enum { others, right, saved, all }) void {
+        const col = e.cols.items[ci];
+        const keep_at = if (keep) |k| std.mem.indexOfScalar(*Item, col.items.items, k) else null;
+        var i: usize = col.items.items.len;
+        while (i > 0) {
+            i -= 1;
+            const it = col.items.items[i];
+            const go = switch (which) {
+                .others => it != keep,
+                .right => keep_at != null and i > keep_at.?,
+                .saved => !it.dirty(),
+                .all => true,
+            };
+            if (go) {
+                if (col.items.items.len == 1 and e.cols.items[ci] == col and which != .all) {
+                    e.close(.{ .col = ci, .idx = i });
+                    return;
+                }
+                e.close(.{ .col = ci, .idx = i });
+                if (ci >= e.cols.items.len or e.cols.items[ci] != col) return;
+            }
+        }
+        if (keep) |k| if (std.mem.indexOfScalar(*Item, col.items.items, k)) |ki| {
+            col.active = ki;
+        };
+    }
+
+    pub fn reopenClosed(e: *Editors) void {
+        const c = e.closed.pop() orelse return;
+        defer e.gpa.free(c.path);
+        if (!fs.exists(e.io, c.path)) return;
+        if (c.col < e.cols.items.len) e.focus = c.col;
+        const it = e.openFile(c.path, false) catch return;
+        switch (it.body) {
+            .file => |d| d.editor.area.collapse(@min(c.caret, d.editor.area.len())),
+            else => {},
+        }
+    }
+
+    pub fn forgetClosed(e: *Editors) void {
+        for (e.closed.items) |c| e.gpa.free(c.path);
+        e.closed.clearRetainingCapacity();
+    }
+
+    /// Moves a tab into another column (at `idx`, or its end).
+    pub fn move(e: *Editors, from: Loc, to_col: usize, idx: ?usize) void {
+        if (to_col >= e.cols.items.len) return;
+        const src = e.cols.items[from.col];
+        const it = e.take(from);
+        it.preview = false;
+        const dst = e.cols.items[to_col];
+        const at_i = @min(idx orelse dst.items.items.len, dst.items.items.len);
+        dst.items.insert(e.gpa, at_i, it) catch {
+            src.items.append(e.gpa, it) catch {};
+            return;
+        };
+        e.show(.{ .col = to_col, .idx = at_i });
+        if (src.items.items.len == 0) {
+            if (std.mem.indexOfScalar(*Column, e.cols.items, src)) |si| e.dropEmpty(si);
+        }
+    }
+
+    /// Moves a tab to a new column right of `col_i`.
+    pub fn splitRight(e: *Editors, from: Loc) void {
+        const ni = e.addColumn(from.col + 1) catch return;
+        const src_col = if (from.col >= ni) from.col + 1 else from.col;
+        // A file shown in one column moves: one editor shows each file.
+        e.move(.{ .col = src_col, .idx = from.idx }, ni, null);
+    }
+
+    /// Saves files a second after their last edit; asks for a frame then.
+    pub fn tick(e: *Editors, c: *ui.Context) void {
+        for (e.cols.items) |col| for (col.items.items) |it| switch (it.body) {
+            .file => |d| {
+                const v = d.editor.area.doc.version;
+                if (v != d.seen) {
+                    d.seen = v;
+                    d.edited_at = c.time;
+                    it.preview = false;
+                }
+                if (!e.auto_save or !d.dirty() or d.path.len == 0) continue;
+                const left = d.edited_at + 1.0 - c.time;
+                if (left <= 0) d.save() catch {} else c.frameIn(@floatCast(left));
+            },
+            else => {},
+        };
+    }
+
+    pub fn reloadChanged(e: *Editors) void {
+        for (e.cols.items) |col| for (col.items.items) |it| switch (it.body) {
+            .file => |d| _ = d.reloadIfChanged(),
+            .image => |im| im.reloadIfChanged(),
+            else => {},
+        };
+    }
+
+    /// A column's strip of tabs.
+    pub fn strip(e: *Editors, c: *ui.Context, ci: usize, chrome: ui.Color) void {
+        const t = c.theme;
+        const col = e.cols.items[ci];
+        const bar = ui.div(c).row().wFull().h(34).bg(chrome).itemsStretch();
+        var close_at: ?usize = null;
+        for (col.items.items, 0..) |it, i| {
+            c.keyed(it);
+            const on = i == col.active;
+            const focused_col = ci == e.focus;
+            const cell = ui.div(c).row().h(34).px(10).gap(6).itemsCenter().bg(if (on) t.background else chrome).hover(if (on) t.background else t.surface_hover);
+            if (on and focused_col) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 0 }, .width = .fill, .height = .{ .px = 2 }, .background = t.accent }, .none, null);
+            switch (it.body) {
+                .file => |d| icons.file(c, d.name()),
+                .image => |im| icons.file(c, std.fs.path.basename(im.path)),
+                .changes, .commit => ui.icon(c, "arrow.triangle.branch", .{ .size = 11, .frame = 14, .color = t.muted }),
+                .terminal => ui.icon(c, "terminal", .{ .size = 11, .frame = 14, .color = t.muted }),
+            }
+            ui.text(c, it.title(c), .{ .size = 13, .italic = it.preview, .color = if (on) t.text else t.muted });
+            const x = ui.div(c).w(16).h(16).center().rounded(4).hover(t.surface_hover);
+            if (it.dirty() and !cell.hovered()) {
+                _ = c.leaf(.{ .width = .{ .px = 7 }, .height = .{ .px = 7 }, .radius = 4, .background = t.text }, .none, null);
+            } else if (cell.hovered() or on) {
+                ui.icon(c, "xmark", .{ .size = 9, .color = t.muted });
+            }
+            const x_clicked = x.clicked();
+            x.end();
+            const ia = cell.interaction();
+            cell.end();
+            if (x_clicked) {
+                close_at = i;
+            } else if (ia.double_clicked) {
+                it.preview = false;
+            } else if (ia.clicked) {
+                e.show(.{ .col = ci, .idx = i });
+            }
+            if (ia.pressed and e.drag == null and c.input.pressed) e.drag = .{ .from = .{ .col = ci, .idx = i }, .start = c.input.mouse };
+            if (ui.contextMenu(c, &e.menu, ia)) |m| {
+                defer m.end();
+                e.menu_at = .{ .col = ci, .idx = i };
+                e.tabMenu(c, m, it);
+            }
+        }
+        // The rest of the strip: the column's lock.
+        ui.spacer(c);
+        if (col.locked) {
+            const lk = ui.div(c).row().h(34).px(8).gap(4).itemsCenter().hover(t.surface_hover);
+            ui.icon(c, "hand.raised", .{ .size = 11, .color = t.muted });
+            ui.text(c, "Locked", .{ .size = 11, .color = t.muted });
+            if (lk.clicked()) col.locked = false;
+            lk.end();
+        }
+        const bi = bar.interaction();
+        bar.end();
+        if (ci < e.strip_rects.len) if (bi.rect) |r| {
+            e.strip_rects[ci] = r;
+        };
+        if (close_at) |i| {
+            e.close(.{ .col = ci, .idx = i });
+            c.changed = true;
+        }
+    }
+
+    fn tabMenu(e: *Editors, c: *ui.Context, m: *ui.MenuPanel, it: *Item) void {
+        const l = e.menu_at;
+        if (m.item("Close", .{ .shortcut = ui.keys.label("⌘W") })) {
+            e.close(l);
+            c.changed = true;
+            return;
+        }
+        if (m.item("Close Others", .{})) e.closeWhere(l.col, it, .others);
+        if (m.item("Close to the Right", .{})) e.closeWhere(l.col, it, .right);
+        if (m.item("Close Saved", .{})) e.closeWhere(l.col, null, .saved);
+        m.separator();
+        if (m.item("Keep Open", .{ .disabled = !it.preview })) it.preview = false;
+        if (m.item("Split Right", .{ .shortcut = ui.keys.label("⌘\\") })) e.splitRight(l);
+        if (l.col + 1 < e.cols.items.len) if (m.item("Move to Right Column", .{})) e.move(l, l.col + 1, null);
+        if (l.col > 0) if (m.item("Move to Left Column", .{})) e.move(l, l.col - 1, null);
+        const col = e.cols.items[l.col];
+        if (m.item(if (col.locked) "Unlock Column" else "Lock Column", .{})) col.locked = !col.locked;
+        switch (it.body) {
+            .terminal => |t| {
+                m.separator();
+                if (m.item("Move Terminal to Panel", .{})) {
+                    _ = e.take(l);
+                    e.gpa.destroy(it);
+                    e.request = .{ .to_panel = t };
+                }
+            },
+            else => if (it.path()) |p| {
+                m.separator();
+                if (m.item("Copy Path", .{})) e.request = .{ .copy_path = p };
+                if (m.item("Reveal in Explorer", .{})) e.request = .{ .reveal = p };
+                if (m.item("Open Changes", .{})) e.request = .{ .open_changes = p };
+            },
+        }
+        c.changed = true;
+    }
+
+    /// Ends a tab drag as the pointer is let go: on a strip, the tab goes
+    /// there; on a column's right edge, into a new column.
+    pub fn endDrag(e: *Editors, c: *ui.Context) void {
+        const dg = &(e.drag orelse return);
+        if (c.input.down) {
+            const d = c.input.mouse;
+            if (!dg.moving and (@abs(d.x - dg.start.x) > 6 or @abs(d.y - dg.start.y) > 6)) dg.moving = true;
+            if (dg.moving) {
+                c.wants_moves = true;
+                const ghost = ui.div(c).absolute().offset(d.x + 8, d.y + 8).px(10).py(4).rounded(4).bg(c.theme.surface_hover).border(c.theme.border);
+                ui.text(c, e.at(dg.from).title(c), .{ .size = 12 });
+                ghost.end();
+            }
+            return;
+        }
+        defer e.drag = null;
+        if (!dg.moving) return;
+        const p = c.input.mouse;
+        const n = @min(e.cols.items.len, e.strip_rects.len);
+        for (0..n) |ci| {
+            if (e.strip_rects[ci].contains(p)) {
+                if (ci != dg.from.col) e.move(dg.from, ci, null);
+                c.changed = true;
+                return;
+            }
+            const r = e.body_rects[ci];
+            if (r.contains(p)) {
+                if (p.x > r.x + r.w - 60) {
+                    const ni = e.addColumn(ci + 1) catch return;
+                    const src = if (dg.from.col >= ni) dg.from.col + 1 else dg.from.col;
+                    e.move(.{ .col = src, .idx = dg.from.idx }, ni, null);
+                } else if (ci != dg.from.col) e.move(dg.from, ci, null);
+                c.changed = true;
+                return;
+            }
+        }
+    }
+};

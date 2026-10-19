@@ -5,9 +5,10 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
-- A first build of MyCode written in Zig on myzig, in `zig/`: the Explorer with Git marks, tabs with a preview tab and
-  auto save, the code editor, quick open and the command palette, source control with stage, unstage, discard and
-  commit, and terminals in the bottom panel.
+- MyCode written in Zig on myzig, in `zig/` (see `zig/README.md`): the Explorer, editor columns and tabs, quick
+  open and the command palette, search and replace, source control with the Changes tab, hunk staging, branches,
+  stash, the commits graph, conflicts and review comments, terminals with profiles, project tabs, themes, and
+  settings and keybindings read from the Go app's files.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

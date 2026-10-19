@@ -7,12 +7,15 @@ const fs = @import("fs.zig");
 const git = @import("git.zig");
 const commands = @import("commands.zig");
 const icons = @import("icons.zig");
+const symbols = @import("symbols.zig");
 
 pub const Pick = union(enum) {
     /// Relative to the workspace, with slashes.
     file: []const u8,
     command: commands.Cmd,
     line: usize,
+    /// A symbol's line, from 0.
+    symbol: usize,
 };
 
 const Hit = struct { index: usize, score: i32 };
@@ -33,14 +36,23 @@ pub const QuickOpen = struct {
     /// Commands run, newest first.
     recent_cmds: std.ArrayList(commands.Cmd) = .empty,
     selected: usize = 0,
-    focus: bool = false,
+    /// Builds left in which the field takes the keyboard: the dialog
+    /// clears the focus as it opens.
+    focus: u8 = 0,
     filtered_for: [1024]u8 = undefined,
     filtered_len: ?usize = null,
+    /// The symbols of the file shown, for `@`; set by the workbench.
+    syms: []const symbols.Symbol = &.{},
+    sym_hits: std.ArrayList(usize) = .empty,
+    /// What `>` shows by a command: its key (from keybindings.json or its own).
+    key_label: ?*const fn (ctx: *anyopaque, c: *ui.Context, cmd: commands.Cmd) []const u8 = null,
+    key_ctx: *anyopaque = undefined,
 
     pub fn deinit(q: *QuickOpen) void {
         if (q.files.len > 0) fs.freeStrings(q.gpa, q.files);
         q.hits.deinit(q.gpa);
         q.cmds.deinit(q.gpa);
+        q.sym_hits.deinit(q.gpa);
         for (q.recent.items) |r| q.gpa.free(r);
         q.recent.deinit(q.gpa);
         q.recent_cmds.deinit(q.gpa);
@@ -52,7 +64,7 @@ pub const QuickOpen = struct {
         q.query.set(prefix);
         q.selected = 0;
         q.filtered_len = null;
-        q.focus = true;
+        q.focus = 6;
         q.dialog.show();
     }
 
@@ -94,6 +106,12 @@ pub const QuickOpen = struct {
         q.selected = 0;
         q.hits.clearRetainingCapacity();
         q.cmds.clearRetainingCapacity();
+        q.sym_hits.clearRetainingCapacity();
+        if (std.mem.startsWith(u8, text, "@")) {
+            const needle = std.mem.trim(u8, text[1..], " ");
+            for (q.syms, 0..) |sy, i| if (score(sy.name, needle) != null) q.sym_hits.append(q.gpa, i) catch {};
+            return;
+        }
         if (std.mem.startsWith(u8, text, ">")) {
             const needle = std.mem.trim(u8, text[1..], " ");
             for (q.recent_cmds.items) |cmd| if (score(commands.info(cmd).title, needle) != null) q.cmds.append(q.gpa, cmd) catch {};
@@ -121,6 +139,7 @@ pub const QuickOpen = struct {
     fn count(q: *const QuickOpen) usize {
         const text = q.query.text();
         if (std.mem.startsWith(u8, text, ">")) return q.cmds.items.len;
+        if (std.mem.startsWith(u8, text, "@")) return q.sym_hits.items.len;
         if (std.mem.startsWith(u8, text, ":")) return 1;
         return q.hits.items.len;
     }
@@ -130,12 +149,12 @@ pub const QuickOpen = struct {
         defer d.end();
         const t = c.theme;
         const fid = c.peekId(null);
-        if (q.focus) {
+        if (q.focus > 0) {
+            if (c.focus != fid) c.changed = true;
             c.focus = fid;
-            c.changed = true;
-            q.focus = false;
+            q.focus -= 1;
         }
-        const field = ui.textField(c, &q.query, .{ .width = .fill, .placeholder = "Search files by name (> for commands, : for a line)", .size = 14 });
+        const field = ui.textField(c, &q.query, .{ .width = .fill, .placeholder = "Search files by name (> for commands, @ for symbols, : for a line)", .size = 14 });
         q.filter();
         const n = q.count();
         if (c.shortcut(.{ .key = ui.Shortcut.down })) q.selected = if (n == 0) 0 else (q.selected + 1) % n;
@@ -151,7 +170,19 @@ pub const QuickOpen = struct {
                 ui.text(c, inf.title, .{ .size = 13 });
                 ui.spacer(c);
                 if (inf.menu.len > 0) ui.text(c, inf.menu, .{ .size = 11, .color = t.muted });
-                if (inf.accel.len > 0) ui.text(c, accelLabel(c, inf.accel), .{ .size = 11, .color = t.muted, .mono = true });
+                const keys = if (q.key_label) |f| f(q.key_ctx, c, q.cmds.items[i]) else "";
+                if (keys.len > 0) ui.text(c, keys, .{ .size = 11, .color = t.muted, .mono = true });
+            } else if (std.mem.startsWith(u8, text, "@")) {
+                const sy = q.syms[q.sym_hits.items[i]];
+                ui.icon(c, switch (sy.kind) {
+                    .function => "chevron.left.forwardslash.chevron.right",
+                    .type => "cube",
+                    .heading => "textformat",
+                    .other => "circle",
+                }, .{ .size = 11, .color = t.accent });
+                ui.text(c, sy.name, .{ .size = 13 });
+                ui.spacer(c);
+                ui.text(c, c.print("{d}", .{sy.line + 1}), .{ .size = 11, .color = t.muted });
             } else if (std.mem.startsWith(u8, text, ":")) {
                 ui.text(c, c.print("Go to line {s}", .{text[1..]}), .{ .size = 13 });
             } else {
@@ -180,6 +211,10 @@ pub const QuickOpen = struct {
             q.noteRan(q.cmds.items[i]);
             return .{ .command = q.cmds.items[i] };
         }
+        if (std.mem.startsWith(u8, text, "@")) {
+            if (i >= q.sym_hits.items.len) return null;
+            return .{ .symbol = q.syms[q.sym_hits.items[i]].line };
+        }
         if (std.mem.startsWith(u8, text, ":")) {
             const line = std.fmt.parseInt(usize, std.mem.trim(u8, text[1..], " "), 10) catch return null;
             return .{ .line = line };
@@ -190,7 +225,7 @@ pub const QuickOpen = struct {
 };
 
 /// Writes an accelerator as the platform does: "CmdOrCtrl+S" as Ctrl+S.
-fn accelLabel(c: *ui.Context, accel: []const u8) []const u8 {
+pub fn accelLabel(c: *ui.Context, accel: []const u8) []const u8 {
     const mac = ui.keys.mac;
     var out: std.ArrayList(u8) = .empty;
     var it = std.mem.splitScalar(u8, accel, '+');
