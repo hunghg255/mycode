@@ -23,6 +23,10 @@ pub fn build(b: *std.Build) void {
     });
     // The Material Icon Theme's icons (icons/update.py makes material.zig).
     root.addImport("material", b.createModule(.{ .root_source_file = b.path("icons/material.zig") }));
+    // The version, from build.zig.zon, for updates.
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    root.addOptions("build_options", options);
     // The logo of the welcome page.
     root.addAnonymousImport("icon_png", .{ .root_source_file = b.path("resources/icon.png") });
     if (win32_res) |res| if (target.result.os.tag == .windows) root.addObjectFile(.{ .cwd_relative = res });

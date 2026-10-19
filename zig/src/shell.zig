@@ -304,7 +304,7 @@ pub const Shell = struct {
                 const n = sh.projects.items.len;
                 if (n > 1) sh.show(if (cmd == .next_project) (sh.current + 1) % n else (sh.current + n - 1) % n);
             },
-            .check_updates => _ = myzig.shell.openUrl("https://github.com/hunghg255/mycode/releases"),
+            .check_updates => sh.main.updates.check(true),
             else => return false,
         }
         c.changed = true;
@@ -352,6 +352,7 @@ pub const Shell = struct {
             box.end();
         }
         sh.recentBox(c);
+        if (sh.main.focused == sh or sh.main.shells.items.len == 1) if (sh.main.updates.view(c)) sh.main.quit();
         // Projects out of sight that rang their terminal's bell.
         for (sh.projects.items, 0..) |wb, i| if (i != sh.current) for (wb.panel.terms.items) |t| if (t.bell) {
             wb.bell = true;

@@ -27,6 +27,7 @@ pub const Main = struct {
     shells: std.ArrayList(*Shell) = .empty,
     focused: ?*Shell = null,
     quitting: bool = false,
+    updates: @import("updates.zig").Updates,
     /// The menu bar's labels, and what its recent folders were made of.
     menu_arena: std.heap.ArenaAllocator,
     menu_recent_len: usize = 0,
@@ -289,7 +290,9 @@ pub fn main(init: std.process.Init) !void {
         .keymap = .init(gpa),
         .profiles_arena = .init(gpa),
         .menu_arena = .init(gpa),
+        .updates = undefined,
     };
+    m.updates = .init(gpa, io, m.store.dir);
     defer {
         // Each window closing frees its shell (closeShell).
         while (m.shells.items.len > 0) {
@@ -307,6 +310,7 @@ pub fn main(init: std.process.Init) !void {
         m.store.deinit();
         m.profiles_arena.deinit();
         m.menu_arena.deinit();
+        m.updates.deinit();
     }
     @import("crashlog.zig").start(gpa, io, m.store.dir);
     m.state = .load(gpa, io, m.store.state_path);
@@ -336,6 +340,8 @@ pub fn main(init: std.process.Init) !void {
         if (m.focused) |sh| sh.show(@min(m.state.f.active, sh.projects.items.len - 1));
     } else for (roots.items) |r| try m.newWindow(&.{r});
     for (files.items) |f| if (m.focused) |sh| if (sh.active()) |wb| @import("wb_files.zig").openPath(wb, f, false);
+    if (m.focused) |sh| m.updates.window = sh.window;
+    m.updates.startTimer();
     try app.run();
 }
 
@@ -355,4 +361,5 @@ test {
     _ = @import("search.zig");
     _ = @import("doc.zig");
     _ = @import("viewer.zig");
+    _ = @import("updates.zig");
 }
