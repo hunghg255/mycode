@@ -1,11 +1,17 @@
-//! A list of files changed, each read as it is chosen, and the diff of the
-//! one chosen below it, unified or side by side, with its runs of changes
-//! to step through. The Changes tab and a commit's tab are made of it.
+//! Diffs of several files in one scroll, as Go MyCode's Changes tab: each
+//! file under a header with its path, its state and the lines added and
+//! removed (folded by a click, and at first past 2,000 lines), each run of
+//! changes under an `@@` line with buttons to stage, unstage or discard it,
+//! three unchanged lines around them, side by side or in one column, and
+//! review comments under their lines. Files are read as they come into view.
+//! The keys are a pager's. A commit's tab is made of it too.
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const icons = @import("icons.zig");
 const hunks = @import("hunks.zig");
+const symbols = @import("symbols.zig");
+const Review = @import("review.zig").Review;
 
 pub const Entry = struct {
     /// Relative to the work tree's top, with slashes.
@@ -23,21 +29,27 @@ pub const Entry = struct {
     dv: ?ui.DiffView = null,
     old_text: []u8 = &.{},
     new_text: []u8 = &.{},
+    syms: []symbols.Symbol = &.{},
     added: usize = 0,
     deleted: usize = 0,
     loaded: bool = false,
+    folded: bool = false,
 };
 
 pub const Event = union(enum) {
     none,
     /// Opens the file (relative) at a line (from 1).
     open: struct { path: []const u8, line: usize },
-    stage_hunk: usize,
-    unstage_hunk: usize,
-    discard_hunk: usize,
-    stage_file,
-    unstage_file,
-    discard_file,
+    stage_hunk: struct { entry: usize, hunk: usize },
+    unstage_hunk: struct { entry: usize, hunk: usize },
+    discard_hunk: struct { entry: usize, hunk: usize },
+    stage_file: usize,
+    unstage_file: usize,
+    discard_file: usize,
+    /// Comment on rows: the new file's lines, and the rows as a diff.
+    comment: struct { entry: usize, first: usize, last: usize, snippet: []const u8 },
+    delete_comment: usize,
+    edit_comment: usize,
 };
 
 /// Reads a side's text: the app's (a blob, or the open file's text).
@@ -46,19 +58,42 @@ pub const Reader = struct {
     read: *const fn (ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path: []const u8) []u8,
 };
 
+pub const Layout = enum { auto, split, inline_ };
+
+/// A row of the scroll.
+const Ref = union(enum) {
+    header: usize,
+    loading: usize,
+    hunk: struct { entry: usize, hunk: usize, row: usize },
+    row: struct { entry: usize, row: usize },
+    comment: struct { entry: usize, index: usize },
+};
+
 pub const DiffList = struct {
     gpa: std.mem.Allocator,
     entries: std.ArrayList(Entry) = .empty,
-    selected: usize = 0,
-    hunk: usize = 0,
-    split: bool = false,
-    list_height: f32 = 180,
+    /// The row chosen, and where a range of rows began.
+    sel: usize = 0,
+    anchor: usize = 0,
     /// Buttons to stage and discard: the Changes tab's, not a commit's.
     editable: bool = true,
+    layout: Layout = .auto,
+    /// The rows of the last frame, and those built.
+    refs: std.ArrayList(Ref) = .empty,
+    first_built: usize = 0,
+    last_built: usize = 0,
+    width: f32 = 800,
+    /// Show this entry's header at the top in the next frame.
+    reveal_entry: ?usize = null,
+    scroll_to: ?usize = null,
+    focus_id: u64 = 0,
+    menu: ui.Menu = .{},
+    selected_entry: usize = 0,
 
     pub fn deinit(dl: *DiffList) void {
         dl.clear();
         dl.entries.deinit(dl.gpa);
+        dl.refs.deinit(dl.gpa);
     }
 
     pub fn clear(dl: *DiffList) void {
@@ -74,6 +109,7 @@ pub const DiffList = struct {
         gpa.free(e.new_spec);
         gpa.free(e.old_text);
         gpa.free(e.new_text);
+        gpa.free(e.syms);
     }
 
     pub fn add(dl: *DiffList, path: []const u8, orig: ?[]const u8, badge: u8, group: []const u8, staged: bool, old_spec: []const u8, new_spec: []const u8) !void {
@@ -89,31 +125,30 @@ pub const DiffList = struct {
         });
     }
 
+    /// The entry the selection is in.
     pub fn current(dl: *DiffList) ?*Entry {
         if (dl.entries.items.len == 0) return null;
-        dl.selected = @min(dl.selected, dl.entries.items.len - 1);
-        return &dl.entries.items[dl.selected];
+        return &dl.entries.items[@min(dl.selected_entry, dl.entries.items.len - 1)];
     }
 
-    /// Chooses the entry of a path (the first, staged before unstaged).
+    /// Shows the entry of a path (the first, staged before unstaged).
     pub fn select(dl: *DiffList, path: []const u8) void {
         for (dl.entries.items, 0..) |e, i| if (std.mem.eql(u8, e.path, path)) {
-            dl.selected = i;
-            dl.hunk = 0;
+            dl.selected_entry = i;
+            dl.reveal_entry = i;
             return;
         };
     }
 
-    /// Reads an entry's sides again (when the file changed).
+    /// Reads the sides again of the entries read (a file changed).
     pub fn reload(dl: *DiffList, r: Reader) void {
         for (dl.entries.items) |*e| if (e.loaded) dl.load(e, r);
     }
 
-    fn load(dl: *DiffList, e: *Entry, r: Reader) void {
+    pub fn load(dl: *DiffList, e: *Entry, r: Reader) void {
         const old = r.read(r.ctx, dl.gpa, e.old_spec, e.path);
         const new = r.read(r.ctx, dl.gpa, e.new_spec, e.path);
-        const same = e.loaded and std.mem.eql(u8, old, e.old_text) and std.mem.eql(u8, new, e.new_text);
-        if (same) {
+        if (e.loaded and std.mem.eql(u8, old, e.old_text) and std.mem.eql(u8, new, e.new_text)) {
             dl.gpa.free(old);
             dl.gpa.free(new);
             return;
@@ -125,151 +160,434 @@ pub const DiffList = struct {
         if (e.dv) |*d| {
             d.set(old, new) catch {};
         } else e.dv = ui.DiffView.init(dl.gpa, old, new, std.fs.path.basename(e.path)) catch null;
+        dl.gpa.free(e.syms);
+        e.syms = symbols.find(dl.gpa, e.new_text, std.mem.endsWith(u8, e.path, ".md")) catch &.{};
         if (e.dv) |*d| {
-            d.setMode(if (dl.split) .split else .unified);
             const st = d.stats();
+            if (!e.loaded and st.added + st.deleted > 2000) e.folded = true;
             e.added = st.added;
             e.deleted = st.deleted;
         }
         e.loaded = true;
     }
 
-    /// The hunks of the entry chosen, in the frame's memory.
-    pub fn hunksOf(_: *DiffList, c: *ui.Context, e: *const Entry) []const hunks.Hunk {
-        return hunks.hunksOf(c.alloc(), e.old_text, e.new_text) catch &.{};
+    fn split(dl: *const DiffList, c: *ui.Context, size: f32) bool {
+        return switch (dl.layout) {
+            .split => true,
+            .inline_ => false,
+            // Side by side when each side has room for 80 columns.
+            .auto => dl.width / 2 >= 80 * c.text.width("0", .{ .size = size, .mono = true }) + 70,
+        };
     }
 
-    fn scrollToHunk(e: *Entry, h: hunks.Hunk) void {
-        const d = &(e.dv orelse return);
-        d.build();
-        for (d.rows.items, 0..) |row, i| {
-            if (row.kind == .same or row.kind == .gap) continue;
-            const hit = if (row.new) |n| n >= h.b0 and n <= h.b1 else if (row.old) |o| o >= h.a0 and o <= h.a1 else false;
-            if (hit) {
-                d.scroll_to = @intCast(i -| 3);
-                return;
+    /// The rows of every entry, made again each frame.
+    fn build(dl: *DiffList, c: *ui.Context, review: ?*const Review, split_mode: bool) void {
+        dl.refs.clearRetainingCapacity();
+        for (dl.entries.items, 0..) |*e, ei| {
+            dl.refs.append(dl.gpa, .{ .header = ei }) catch return;
+            if (e.folded) continue;
+            if (!e.loaded) {
+                dl.refs.append(dl.gpa, .{ .loading = ei }) catch return;
+                continue;
+            }
+            const d = &(e.dv orelse continue);
+            d.setMode(if (split_mode) .split else .unified);
+            d.build();
+            var hunk: usize = 0;
+            var prev_change = false;
+            for (d.rows.items, 0..) |row, ri| {
+                const change = row.kind == .added or row.kind == .deleted or row.new_kind == .added;
+                if (change and !prev_change) {
+                    dl.refs.append(dl.gpa, .{ .hunk = .{ .entry = ei, .hunk = hunk, .row = ri } }) catch return;
+                    hunk += 1;
+                }
+                prev_change = change;
+                dl.refs.append(dl.gpa, .{ .row = .{ .entry = ei, .row = ri } }) catch return;
+                // Comments end on a new line: under it.
+                if (review) |rv| if (row.new) |n| for (rv.list.items, 0..) |cm, ci| {
+                    if (cm.outdated or cm.last != n or !std.mem.eql(u8, cm.path, e.path)) continue;
+                    dl.refs.append(dl.gpa, .{ .comment = .{ .entry = ei, .index = ci } }) catch return;
+                };
             }
         }
+        _ = c;
+        if (dl.sel >= dl.refs.items.len) dl.sel = dl.refs.items.len -| 1;
+        if (dl.anchor >= dl.refs.items.len) dl.anchor = dl.sel;
     }
 
-    pub fn view(dl: *DiffList, c: *ui.Context, r: Reader, chrome: ui.Color) Event {
+    fn entryOf(dl: *const DiffList, i: usize) usize {
+        return switch (dl.refs.items[i]) {
+            .header => |e| e,
+            .loading => |e| e,
+            .hunk => |h| h.entry,
+            .row => |r| r.entry,
+            .comment => |cm| cm.entry,
+        };
+    }
+
+    /// The hunk a row is in (the last `@@` at or above it, in its entry).
+    fn hunkAt(dl: *const DiffList, i: usize) ?struct { entry: usize, hunk: usize } {
+        const ei = dl.entryOf(i);
+        var k = i + 1;
+        while (k > 0) {
+            k -= 1;
+            switch (dl.refs.items[k]) {
+                .hunk => |h| return .{ .entry = h.entry, .hunk = h.hunk },
+                .header => return null,
+                else => {},
+            }
+            if (dl.entryOf(k) != ei) return null;
+        }
+        return null;
+    }
+
+    fn moveTo(dl: *DiffList, i: usize, extend: bool) void {
+        dl.sel = @min(i, dl.refs.items.len -| 1);
+        if (!extend) dl.anchor = dl.sel;
+        dl.selected_entry = if (dl.refs.items.len > 0) dl.entryOf(dl.sel) else 0;
+        // Keep it in view.
+        if (dl.sel < dl.first_built + 4 or dl.sel + 4 > dl.last_built) dl.scroll_to = dl.sel -| 4;
+    }
+
+    fn next(dl: *const DiffList, comptime tag: std.meta.Tag(Ref), forward: bool) ?usize {
+        var i = dl.sel;
+        while (true) {
+            if (forward) {
+                i += 1;
+                if (i >= dl.refs.items.len) return null;
+            } else {
+                if (i == 0) return null;
+                i -= 1;
+            }
+            if (dl.refs.items[i] == tag) return i;
+        }
+    }
+
+    /// The new file's line of a row: its own, or the nearest above.
+    fn newLine(dl: *const DiffList, i: usize) ?usize {
+        var k = i + 1;
+        while (k > 0) {
+            k -= 1;
+            switch (dl.refs.items[k]) {
+                .row => |r| {
+                    const e = &dl.entries.items[r.entry];
+                    const d = &(e.dv orelse return null);
+                    if (d.rows.items[r.row].new) |n| return n;
+                },
+                .header => return null,
+                else => {},
+            }
+        }
+        return null;
+    }
+
+    /// The rows chosen, as a diff (for a comment, for the clipboard).
+    fn chosenText(dl: *const DiffList, c: *ui.Context, with_place: bool) ?struct { entry: usize, first: usize, last: usize, text: []const u8 } {
+        const lo = @min(dl.sel, dl.anchor);
+        const hi = @max(dl.sel, dl.anchor);
+        const ei = dl.entryOf(lo);
+        var out: std.ArrayList(u8) = .empty;
+        const a = c.alloc();
+        var first: ?usize = null;
+        var last: usize = 0;
+        for (lo..hi + 1) |i| switch (dl.refs.items[i]) {
+            .row => |r| {
+                if (r.entry != ei) continue;
+                const d = &(dl.entries.items[r.entry].dv orelse continue);
+                const row = d.rows.items[r.row];
+                if (row.kind == .gap) continue;
+                if (row.old) |o| if (row.kind == .deleted) {
+                    out.print(a, "-{s}\n", .{d.old_lines[o]}) catch {};
+                };
+                if (row.new) |n| {
+                    const k: u8 = if (row.kind == .added or row.new_kind == .added) '+' else ' ';
+                    out.print(a, "{c}{s}\n", .{ k, d.new_lines[n] }) catch {};
+                    if (first == null) first = n;
+                    last = n;
+                }
+            },
+            else => {},
+        };
+        const f = first orelse (dl.newLine(lo) orelse return null);
+        if (first == null) last = f;
+        if (with_place) {
+            const e = &dl.entries.items[ei];
+            const place = if (f == last) c.print("{s}:{d}\n", .{ e.path, f + 1 }) else c.print("{s}:{d}-{d}\n", .{ e.path, f + 1, last + 1 });
+            return .{ .entry = ei, .first = f, .last = last, .text = std.mem.concat(a, u8, &.{ place, "```diff\n", out.items, "```\n" }) catch out.items };
+        }
+        return .{ .entry = ei, .first = f, .last = last, .text = out.items };
+    }
+
+    pub fn view(dl: *DiffList, c: *ui.Context, r: Reader, chrome: ui.Color, review: ?*const Review, colors: ?ui.SyntaxColors) Event {
         const t = c.theme;
         var ev: Event = .none;
-        const n = dl.entries.items.len;
-        // The list takes the keyboard when clicked: then keys work as a pager's.
+        const size: f32 = 12.5;
+        const opts: ui.DiffViewOptions = .{ .size = size, .colors = colors, .digits = 4 };
+        const row_h = ui.diffRowHeight(c, opts);
+        const split_mode = dl.split(c, size);
+        dl.build(c, review, split_mode);
+        const n = dl.refs.items.len;
+
         const box = c.open(.{ .direction = .column, .width = .fill, .height = .fill }, null);
         defer c.end();
-        const focused = c.interact(box, .{ .focusable = true }).focused;
-        if (focused) {
-            if (c.shortcut(.{ .key = '.' })) dl.choose(@min(dl.selected + 1, n -| 1));
-            if (c.shortcut(.{ .key = ',' })) dl.choose(dl.selected -| 1);
-            if (c.shortcut(.{ .key = 'j' }) or c.shortcut(.{ .key = ui.Shortcut.down })) dl.choose(@min(dl.selected + 1, n -| 1));
-            if (c.shortcut(.{ .key = 'k' }) or c.shortcut(.{ .key = ui.Shortcut.up })) dl.choose(dl.selected -| 1);
-        }
-        if (n == 0) {
+        const bi = c.interact(box, .{ .focusable = true });
+        dl.focus_id = bi.id;
+        if (bi.rect) |rc| dl.width = rc.w;
+        const focused = bi.focused;
+        if (dl.entries.items.len == 0) {
             ui.column(c, .{ .width = .fill, .grow = 1, .align_items = .center, .justify = .center });
             ui.text(c, "No changes", .{ .size = 13, .color = t.muted });
             ui.end(c);
             return ev;
         }
-        var sp = ui.split(c, &dl.list_height, .{ .vertical = true, .min = 60 });
+        if (focused) ev = dl.keys(c, n, row_h);
+        // The bar: the file in view, the counts, the layout.
         {
-            ui.scroll(c, .{ .width = .fill, .height = .fill, .background = chrome });
-            defer ui.end(c);
-            var last_group: []const u8 = "";
-            for (dl.entries.items, 0..) |*e, i| {
-                if (!std.mem.eql(u8, e.group, last_group)) {
-                    last_group = e.group;
-                    ui.row(c, .{ .width = .fill, .padding = .xy(10, 4) });
-                    ui.text(c, e.group, .{ .size = 11, .weight = .semibold, .color = t.muted });
-                    ui.end(c);
-                }
-                c.keyed(e);
-                const on = i == dl.selected;
-                const row = ui.div(c).row().wFull().h(24).px(12).gap(8).itemsCenter().bg(if (on) t.accent.alpha(0.18) else .transparent).hover(t.surface_hover);
-                icons.file(c, std.fs.path.basename(e.path));
-                ui.text(c, e.path, .{ .size = 12 });
-                if (e.orig) |o| ui.text(c, c.print("← {s}", .{o}), .{ .size = 11, .color = t.muted });
-                ui.spacer(c);
-                if (e.loaded) {
-                    ui.text(c, c.print("+{d}", .{e.added}), .{ .size = 11, .color = .hex(0x4fa86d), .mono = true });
-                    ui.text(c, c.print("−{d}", .{e.deleted}), .{ .size = 11, .color = .hex(0xe0607e), .mono = true });
-                }
-                ui.text(c, c.print("{c}", .{e.badge}), .{ .size = 11, .mono = true, .color = t.muted });
-                if (row.clicked()) dl.choose(i);
-                row.end();
-            }
-        }
-        sp.second();
-        const e = dl.current().?;
-        if (!e.loaded) dl.load(e, r);
-        const hs = dl.hunksOf(c, e);
-        if (dl.hunk >= hs.len) dl.hunk = hs.len -| 1;
-        {
+            const cur = dl.current().?;
             const bar = ui.div(c).row().wFull().h(30).px(10).gap(8).itemsCenter().bg(chrome);
             defer bar.end();
-            icons.file(c, std.fs.path.basename(e.path));
-            ui.text(c, e.path, .{ .size = 12, .weight = .semibold });
-            ui.text(c, c.print("+{d} −{d}", .{ e.added, e.deleted }), .{ .size = 11, .color = t.muted });
+            icons.file(c, std.fs.path.basename(cur.path));
+            ui.text(c, cur.path, .{ .size = 12, .weight = .semibold });
             ui.spacer(c);
-            if (hs.len > 0) {
-                ui.text(c, c.print("Change {d} of {d}", .{ dl.hunk + 1, hs.len }), .{ .size = 11, .color = t.muted });
-                if (tool(c, "↑")) dl.stepHunk(e, hs, false);
-                if (tool(c, "↓")) dl.stepHunk(e, hs, true);
-                if (dl.editable) {
-                    if (e.staged) {
-                        if (tool(c, "Unstage Change")) ev = .{ .unstage_hunk = dl.hunk };
-                    } else if (e.badge != 'U') {
-                        if (tool(c, "Stage Change")) ev = .{ .stage_hunk = dl.hunk };
-                        if (tool(c, "Discard Change")) ev = .{ .discard_hunk = dl.hunk };
-                    }
-                }
+            var added: usize = 0;
+            var deleted: usize = 0;
+            for (dl.entries.items) |e| {
+                added += e.added;
+                deleted += e.deleted;
             }
-            if (dl.editable) {
-                if (e.staged) {
-                    if (tool(c, "Unstage File")) ev = .unstage_file;
-                } else {
-                    if (tool(c, "Stage File")) ev = .stage_file;
-                    if (tool(c, "Discard File")) ev = .discard_file;
-                }
+            ui.text(c, c.print("{d} files  +{d} −{d}", .{ dl.entries.items.len, added, deleted }), .{ .size = 11, .color = t.muted });
+            if (tool(c, "↑")) if (dl.next(.hunk, false)) |i| dl.moveTo(i, false);
+            if (tool(c, "↓")) if (dl.next(.hunk, true)) |i| dl.moveTo(i, false);
+            const label = switch (dl.layout) {
+                .auto => "Layout: Auto",
+                .split => "Layout: Side by Side",
+                .inline_ => "Layout: Inline",
+            };
+            if (tool(c, label)) dl.layout = switch (dl.layout) {
+                .auto => .split,
+                .split => .inline_,
+                .inline_ => .auto,
+            };
+            if (tool(c, "Fold All")) for (dl.entries.items) |*e| {
+                e.folded = true;
+            };
+            if (tool(c, "Unfold All")) for (dl.entries.items) |*e| {
+                e.folded = false;
+            };
+        }
+        // Where to scroll: an entry to show, a row to keep in view.
+        if (dl.reveal_entry) |re| {
+            dl.reveal_entry = null;
+            for (dl.refs.items, 0..) |rf, i| if (rf == .header and rf.header == re) {
+                dl.sel = i;
+                dl.anchor = i;
+                dl.scroll_to = i;
+                break;
+            };
+        }
+        const to: ?f32 = if (dl.scroll_to) |i| @as(f32, @floatFromInt(i)) * row_h else null;
+        dl.scroll_to = null;
+        var rows = ui.list(c, .{ .count = n, .row_height = row_h, .scroll_to = to });
+        var first: usize = std.math.maxInt(usize);
+        var last: usize = 0;
+        var to_load: ?usize = null;
+        while (rows.next()) |i| {
+            first = @min(first, i);
+            last = @max(last, i);
+            const rf = dl.refs.items[i];
+            const chosen = focused and i >= @min(dl.sel, dl.anchor) and i <= @max(dl.sel, dl.anchor);
+            const cell = ui.div(c).row().wFull().h(row_h).bg(if (chosen) t.accent.alpha(0.14) else .transparent);
+            switch (rf) {
+                .header => |ei| {
+                    const a = dl.header(c, ei, row_h, chrome);
+                    if (a != .none) ev = a;
+                },
+                .loading => |ei| {
+                    to_load = to_load orelse ei;
+                    ui.text(c, "   Reading…", .{ .size = 11, .color = t.muted });
+                },
+                .hunk => |h| {
+                    const a = dl.hunkRow(c, h.entry, h.hunk, row_h);
+                    if (a != .none) ev = a;
+                },
+                .row => |rr| {
+                    const e = &dl.entries.items[rr.entry];
+                    if (e.dv) |*d| ui.diffRow(c, d, rr.row, opts);
+                },
+                .comment => |cm| if (review) |rv| if (cm.index < rv.list.items.len) {
+                    const k = rv.list.items[cm.index];
+                    ui.row(c, .{ .grow = 1, .height = .fill, .padding = .xy(12, 0), .gap = 8, .align_items = .center, .background = t.warning.alpha(0.12) });
+                    ui.text(c, "●", .{ .size = 11, .color = t.warning });
+                    ui.text(c, std.mem.sliceTo(k.text, '\n'), .{ .size = 12 });
+                    ui.spacer(c);
+                    if (tool(c, "Edit")) ev = .{ .edit_comment = cm.index };
+                    if (tool(c, "Delete")) ev = .{ .delete_comment = cm.index };
+                    ui.end(c);
+                },
             }
-            if (tool(c, if (dl.split) "Inline" else "Side by Side")) dl.setSplit(!dl.split);
-            if (tool(c, "Open File")) ev = .{ .open = .{ .path = e.path, .line = if (hs.len > 0) hs[dl.hunk].b0 + 1 else 1 } };
+            const ci = cell.interaction();
+            cell.end();
+            if (ci.double_clicked) {
+                if (dl.lineOf(i)) |line| ev = .{ .open = .{ .path = dl.entries.items[dl.entryOf(i)].path, .line = line + 1 } };
+            } else if (ci.pressed and c.input.pressed) {
+                dl.sel = i;
+                if (!c.input.shift) dl.anchor = i;
+                dl.selected_entry = dl.entryOf(i);
+                c.focus = dl.focus_id;
+            }
         }
-        if (focused) {
-            if (c.shortcut(.{ .key = ']' })) dl.stepHunk(e, hs, true);
-            if (c.shortcut(.{ .key = '[' })) dl.stepHunk(e, hs, false);
-            if (dl.editable and c.shortcut(.{ .key = 's' }) and hs.len > 0) ev = if (e.staged) .{ .unstage_hunk = dl.hunk } else .{ .stage_hunk = dl.hunk };
-            if (c.shortcut(.{ .key = 'e' }) or c.shortcut(.{ .key = ui.Shortcut.enter })) ev = .{ .open = .{ .path = e.path, .line = if (hs.len > 0) hs[dl.hunk].b0 + 1 else 1 } };
+        rows.end();
+        if (first != std.math.maxInt(usize)) {
+            dl.first_built = first;
+            dl.last_built = last;
         }
-        if (e.dv) |*d| ui.diffView(c, d, .{ .size = 12.5 }) else ui.text(c, "  The file can't be read.", .{ .size = 12, .color = t.muted });
-        _ = sp.end();
+        // Files are read as they come into view, one a frame.
+        if (to_load) |ei| {
+            dl.load(&dl.entries.items[ei], r);
+            c.changed = true;
+        }
         return ev;
     }
 
-    fn choose(dl: *DiffList, i: usize) void {
-        if (i == dl.selected) return;
-        dl.selected = i;
-        dl.hunk = 0;
+    /// The new file's line a row shows (for opening the file there).
+    fn lineOf(dl: *const DiffList, i: usize) ?usize {
+        return switch (dl.refs.items[i]) {
+            .row, .comment => dl.newLine(i),
+            .hunk => |h| blk: {
+                const e = &dl.entries.items[h.entry];
+                const d = &(e.dv orelse break :blk null);
+                if (h.hunk < d.hunks.len) break :blk d.hunks[h.hunk].b0;
+                break :blk null;
+            },
+            else => 0,
+        };
     }
 
-    fn stepHunk(dl: *DiffList, e: *Entry, hs: []const hunks.Hunk, forward: bool) void {
-        if (hs.len == 0) return;
-        if (forward) {
-            if (dl.hunk + 1 < hs.len) dl.hunk += 1 else if (dl.selected + 1 < dl.entries.items.len) {
-                dl.choose(dl.selected + 1);
-                return;
-            }
-        } else if (dl.hunk > 0) dl.hunk -= 1 else if (dl.selected > 0) {
-            dl.choose(dl.selected - 1);
-            return;
+    fn header(dl: *DiffList, c: *ui.Context, ei: usize, row_h: f32, chrome: ui.Color) Event {
+        const t = c.theme;
+        var ev: Event = .none;
+        const e = &dl.entries.items[ei];
+        const row = ui.div(c).row().wFull().h(row_h).px(8).gap(6).itemsCenter().bg(chrome).hover(t.surface_hover);
+        ui.icon(c, if (e.folded) "chevron.right" else "chevron.down", .{ .size = 9, .color = t.muted });
+        icons.file(c, std.fs.path.basename(e.path));
+        if (std.fs.path.dirnamePosix(e.path)) |d| ui.text(c, c.print("{s}/", .{d}), .{ .size = 12, .color = t.muted });
+        ui.text(c, std.fs.path.basenamePosix(e.path), .{ .size = 12, .weight = .semibold });
+        const badge = ui.div(c).px(5).h(16).itemsCenter().rounded(3).bg(t.accent.alpha(0.16));
+        ui.text(c, if (e.orig) |o| c.print("{c} ← {s}", .{ e.badge, o }) else c.print("{c}", .{e.badge}), .{ .size = 10 });
+        badge.end();
+        if (e.staged) ui.text(c, "staged", .{ .size = 10, .color = t.muted });
+        if (e.loaded) {
+            ui.text(c, c.print("+{d}", .{e.added}), .{ .size = 11, .color = t.success, .mono = true });
+            ui.text(c, c.print("−{d}", .{e.deleted}), .{ .size = 11, .color = t.danger, .mono = true });
+            // A bar of five blocks: green for lines added, red for removed.
+            const total = e.added + e.deleted;
+            const green = if (total == 0) 0 else (e.added * 5 + total / 2) / total;
+            for (0..5) |k| _ = c.leaf(.{ .width = .{ .px = 7 }, .height = .{ .px = 7 }, .radius = 1, .background = if (total == 0) t.border else if (k < green) t.success else t.danger }, .none, null);
         }
-        scrollToHunk(e, hs[dl.hunk]);
+        ui.spacer(c);
+        var acted = false;
+        if (row.hovered() or ei == dl.selected_entry) {
+            if (tool(c, "Open File")) {
+                ev = .{ .open = .{ .path = e.path, .line = 1 } };
+                acted = true;
+            }
+            if (dl.editable) {
+                if (e.staged) {
+                    if (tool(c, "Unstage")) {
+                        ev = .{ .unstage_file = ei };
+                        acted = true;
+                    }
+                } else {
+                    if (e.badge != 'C' and tool(c, "Discard")) {
+                        ev = .{ .discard_file = ei };
+                        acted = true;
+                    }
+                    if (tool(c, "Stage")) {
+                        ev = .{ .stage_file = ei };
+                        acted = true;
+                    }
+                }
+            }
+        }
+        if (row.clicked() and !acted) {
+            e.folded = !e.folded;
+            c.changed = true;
+        }
+        row.end();
+        return ev;
     }
 
-    pub fn setSplit(dl: *DiffList, on: bool) void {
-        dl.split = on;
-        for (dl.entries.items) |*e| if (e.dv) |*d| d.setMode(if (on) .split else .unified);
+    fn hunkRow(dl: *DiffList, c: *ui.Context, ei: usize, k: usize, row_h: f32) Event {
+        const t = c.theme;
+        var ev: Event = .none;
+        const e = &dl.entries.items[ei];
+        const d = &(e.dv orelse return ev);
+        const row = ui.div(c).row().wFull().h(row_h).px(10).gap(8).itemsCenter().bg(t.accent.alpha(0.06)).hover(t.accent.alpha(0.12));
+        if (k < d.hunks.len) {
+            const h = d.hunks[k];
+            ui.text(c, c.print("@@ -{d},{d} +{d},{d} @@", .{ h.a0 + 1, h.a1 - h.a0, h.b0 + 1, h.b1 - h.b0 }), .{ .size = 11, .mono = true, .color = t.muted });
+            var buf: [4]symbols.Symbol = undefined;
+            const around = symbols.around(&buf, e.syms, h.b0);
+            if (around.len > 0) ui.text(c, around[around.len - 1].name, .{ .size = 11, .color = t.muted });
+        }
+        ui.spacer(c);
+        if (dl.editable and (row.hovered() or dl.hunkAt(dl.sel) != null and dl.hunkAt(dl.sel).?.entry == ei and dl.hunkAt(dl.sel).?.hunk == k)) {
+            if (e.staged) {
+                if (tool(c, "Unstage")) ev = .{ .unstage_hunk = .{ .entry = ei, .hunk = k } };
+            } else if (e.badge != 'U' and e.badge != 'C') {
+                if (tool(c, "Discard")) ev = .{ .discard_hunk = .{ .entry = ei, .hunk = k } };
+                if (tool(c, "Stage")) ev = .{ .stage_hunk = .{ .entry = ei, .hunk = k } };
+            }
+        }
+        row.end();
+        return ev;
+    }
+
+    fn keys(dl: *DiffList, c: *ui.Context, n: usize, row_h: f32) Event {
+        if (n == 0) return .none;
+        const S = ui.Shortcut;
+        const page = @max(@as(usize, @intFromFloat(@max(c.size.h - 120, 100) / row_h)) -| 2, 1);
+        if (c.shortcut(.{ .key = 'j' }) or c.shortcut(.{ .key = S.down })) dl.moveTo(dl.sel + 1, false);
+        if (c.shortcut(.{ .key = 'k' }) or c.shortcut(.{ .key = S.up })) dl.moveTo(dl.sel -| 1, false);
+        if (c.shortcut(.{ .key = 'j', .shift = true }) or c.shortcut(.{ .key = S.down, .shift = true })) dl.moveTo(dl.sel + 1, true);
+        if (c.shortcut(.{ .key = 'k', .shift = true }) or c.shortcut(.{ .key = S.up, .shift = true })) dl.moveTo(dl.sel -| 1, true);
+        if (c.shortcut(.{ .key = ']' })) if (dl.next(.hunk, true)) |i| dl.moveTo(i, false);
+        if (c.shortcut(.{ .key = '[' })) if (dl.next(.hunk, false)) |i| dl.moveTo(i, false);
+        if (c.shortcut(.{ .key = '.' })) if (dl.next(.header, true)) |i| dl.moveTo(i, false);
+        if (c.shortcut(.{ .key = ',' })) if (dl.next(.header, false)) |i| dl.moveTo(i, false);
+        if (c.shortcut(.{ .key = ' ' }) or c.shortcut(.{ .key = 'f' }) or c.shortcut(.{ .key = S.page_down })) dl.moveTo(dl.sel + page, false);
+        if (c.shortcut(.{ .key = 'b' }) or c.shortcut(.{ .key = S.page_up })) dl.moveTo(dl.sel -| page, false);
+        if (c.shortcut(.{ .key = 'd' })) dl.moveTo(dl.sel + page / 2, false);
+        if (c.shortcut(.{ .key = 'u' })) dl.moveTo(dl.sel -| (page / 2), false);
+        if (c.shortcut(.{ .key = 'g' }) or c.shortcut(.{ .key = S.home })) dl.moveTo(0, false);
+        if (c.shortcut(.{ .key = 'g', .shift = true }) or c.shortcut(.{ .key = S.end })) dl.moveTo(n - 1, false);
+        if (c.shortcut(.{ .key = S.escape })) dl.anchor = dl.sel;
+        const rf = dl.refs.items[dl.sel];
+        if (c.shortcut(.{ .key = 'z' }) or c.shortcut(.{ .key = S.enter })) {
+            switch (rf) {
+                .header => |ei| dl.entries.items[ei].folded = !dl.entries.items[ei].folded,
+                .row => |rr| {
+                    const d = &(dl.entries.items[rr.entry].dv orelse return .none);
+                    const row = d.rows.items[rr.row];
+                    if (row.kind == .gap and row.hidden > 0) d.expand(row.run) else if (dl.lineOf(dl.sel)) |line| return .{ .open = .{ .path = dl.entries.items[rr.entry].path, .line = line + 1 } };
+                },
+                else => {},
+            }
+            c.changed = true;
+        }
+        if (c.shortcut(.{ .key = 'e' })) if (dl.lineOf(dl.sel)) |line| return .{ .open = .{ .path = dl.entries.items[dl.entryOf(dl.sel)].path, .line = line + 1 } };
+        if (dl.editable and c.shortcut(.{ .key = 's' })) if (dl.hunkAt(dl.sel)) |h| {
+            return if (dl.entries.items[h.entry].staged) .{ .unstage_hunk = .{ .entry = h.entry, .hunk = h.hunk } } else .{ .stage_hunk = .{ .entry = h.entry, .hunk = h.hunk } };
+        };
+        if (c.shortcut(.{ .key = 'c' })) {
+            if (rf == .comment) return .{ .edit_comment = rf.comment.index };
+            if (dl.chosenText(c, false)) |ct| return .{ .comment = .{ .entry = ct.entry, .first = ct.first, .last = ct.last, .snippet = ct.text } };
+        }
+        if (c.shortcut(.{ .key = S.delete }) or c.shortcut(.{ .key = S.backspace })) if (rf == .comment) return .{ .delete_comment = rf.comment.index };
+        if (c.shortcut(.{ .key = 'c', .cmd = true })) if (dl.chosenText(c, true)) |ct| {
+            _ = myzig.clipboard.writeText(ct.text);
+        };
+        return .none;
     }
 };
 

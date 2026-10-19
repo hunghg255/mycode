@@ -146,11 +146,12 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
         .image => |im| im.view(c),
         .changes => |ch| {
             ch.rebuild(wb.scm.changes, wb.scm.generation);
-            wbgit.diffEvent(wb, c, &ch.list, ch.list.view(c, wbgit.reader(wb), chrome));
+            ch.list.layout = if (std.mem.eql(u8, wb.shell.store.s.diffLayout, "split")) .split else if (std.mem.eql(u8, wb.shell.store.s.diffLayout, "inline")) .inline_ else ch.list.layout;
+            wbgit.diffEvent(wb, c, &ch.list, ch.list.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette)));
         },
         .commit => |cv| {
             cv.header(c, chrome);
-            _ = cv.list.view(c, wbgit.reader(wb), chrome);
+            wbgit.diffEvent(wb, c, &cv.list, cv.list.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette)));
         },
         .terminal => |t| t.view(c),
     }
@@ -212,6 +213,8 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
     d.editor.wrap = d.own_wrap orelse s.wordWrap;
     d.editor.background = .hex(sh.palette.editor);
     d.editor.syntax.colors = themes.syntax(sh.palette);
+    d.editor.guides = c.theme.text.alpha(if (sh.palette.dark) 0.08 else 0.1);
+    notes(wb, c, d, rel);
     {
         const row = ui.div(c).row().wFull().grow().itemsStretch();
         defer row.end();
@@ -237,7 +240,7 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
         if (b.clicked()) d.editor.goToLine(sy.line + 1);
         b.end();
     };
-    const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize });
+    const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight });
     d.first_line = r.first_line;
     d.last_line = r.last_line;
 }
@@ -345,6 +348,21 @@ fn reviewStrip(wb: *Workbench, c: *ui.Context, d: *Doc, rel: []const u8) void {
         row.end();
     };
     if (remove) |i| wb.review.remove(i);
+}
+
+/// What shows after lines' ends: the caret line's blame, and each review
+/// comment after its last line.
+fn notes(wb: *Workbench, c: *ui.Context, d: *Doc, rel: []const u8) void {
+    var list: std.ArrayList(@import("doc.zig").Note) = .empty;
+    const t = c.theme;
+    if (wb.blame.items.len > 0 and wb.shell.store.s.blame) {
+        list.append(c.alloc(), .{ .line = d.editor.area.caretLine(), .text = c.print("{s}", .{wb.blame.items}), .color = t.muted.alpha(0.7) }) catch {};
+    }
+    for (wb.review.list.items) |cm| if (!cm.outdated and std.mem.eql(u8, cm.path, rel)) {
+        const first = std.mem.sliceTo(cm.text, '\n');
+        list.append(c.alloc(), .{ .line = cm.last, .text = c.print("● {s}", .{first[0..@min(first.len, 120)]}), .color = .hex(wb.shell.palette.modified) }) catch {};
+    };
+    d.notes = list.items;
 }
 
 fn updateSymbols(wb: *Workbench, d: *Doc) void {
@@ -504,10 +522,8 @@ fn blame(wb: *Workbench, c: *ui.Context, d: *Doc) void {
         wb.blame_at = c.time;
         wb.blame.clearRetainingCapacity();
     }
-    if (wb.blame.items.len > 0) {
-        ui.text(c, wb.blame.items, .{ .size = 11, .color = c.theme.muted });
-        return;
-    }
+    // The text shows after the caret's line (`notes`).
+    if (wb.blame.items.len > 0) return;
     if (d.dirty() or wb.blame_busy or wb.blame_tried == key) return;
     const wait = wb.blame_at + 0.6 - c.time;
     if (wait > 0) return c.frameIn(@floatCast(wait));

@@ -505,10 +505,13 @@ pub fn reader(wb: *Workbench) difflist.Reader {
 pub fn diffEvent(wb: *Workbench, c: *ui.Context, dl: *difflist.DiffList, ev: difflist.Event) void {
     if (ev == .none) return;
     c.changed = true;
-    const e = dl.current() orelse return;
     const g = wb.gpa;
-    const path = g.dupe(u8, e.path) catch return;
-    defer g.free(path);
+    const pathOf = struct {
+        fn f(d: *difflist.DiffList, gpa: std.mem.Allocator, ei: usize) ?[]u8 {
+            if (ei >= d.entries.items.len) return null;
+            return gpa.dupe(u8, d.entries.items[ei].path) catch null;
+        }
+    }.f;
     switch (ev) {
         .none => {},
         .open => |o| {
@@ -521,36 +524,74 @@ pub fn diffEvent(wb: *Workbench, c: *ui.Context, dl: *difflist.DiffList, ev: dif
                 else => {},
             }
         },
-        .stage_file => _ = quick(wb, &.{ "add", "--", path }),
-        .unstage_file => _ = quick(wb, &.{ "reset", "-q", "HEAD", "--", path }),
-        .discard_file => wb.ask(.discard_file, path, "Discard changes?", path, &.{ "Cancel", "Discard" }),
-        .stage_hunk, .unstage_hunk, .discard_hunk => |k| hunkOp(wb, c, dl, k, ev),
+        .stage_file => |ei| if (pathOf(dl, g, ei)) |p| {
+            defer g.free(p);
+            _ = quick(wb, &.{ "add", "--", p });
+        },
+        .unstage_file => |ei| if (pathOf(dl, g, ei)) |p| {
+            defer g.free(p);
+            _ = quick(wb, &.{ "reset", "-q", "HEAD", "--", p });
+        },
+        .discard_file => |ei| if (pathOf(dl, g, ei)) |p| {
+            defer g.free(p);
+            wb.ask(.discard_file, p, "Discard changes?", p, &.{ "Cancel", "Discard" });
+        },
+        .stage_hunk => |h| hunkOp(wb, c, dl, h.entry, h.hunk, .stage),
+        .unstage_hunk => |h| hunkOp(wb, c, dl, h.entry, h.hunk, .unstage),
+        .discard_hunk => |h| hunkOp(wb, c, dl, h.entry, h.hunk, .discard),
+        .comment => |cm| {
+            const e = &dl.entries.items[cm.entry];
+            var existing: []const u8 = "";
+            for (wb.review.list.items) |k| if (std.mem.eql(u8, k.path, e.path) and k.first == cm.first and k.last == cm.last) {
+                existing = k.text;
+            };
+            wb.diff_comment.clearRetainingCapacity();
+            wb.diff_comment.appendSlice(g, cm.snippet) catch {};
+            var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+            const target = std.fmt.bufPrint(&buf, "{d}:{d}:{s}", .{ cm.first, cm.last, e.path }) catch return;
+            wb.prompt.askText(g, .diff_comment, if (cm.first == cm.last) "A comment on this line" else "A comment on these lines", existing, target);
+        },
+        .delete_comment => |i| if (i < wb.review.list.items.len) wb.review.remove(i),
+        .edit_comment => |i| if (i < wb.review.list.items.len) {
+            const k = wb.review.list.items[i];
+            wb.diff_comment.clearRetainingCapacity();
+            wb.diff_comment.appendSlice(g, k.snippet) catch {};
+            var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+            const target = std.fmt.bufPrint(&buf, "{d}:{d}:{s}", .{ k.first, k.last, k.path }) catch return;
+            wb.prompt.askText(g, .diff_comment, "Edit the comment", k.text, target);
+        },
     }
 }
 
-/// Stages, unstages or discards one run of changes of the entry chosen,
-/// reading the index and the file again first.
-fn hunkOp(wb: *Workbench, c: *ui.Context, dl: *difflist.DiffList, k: usize, ev: difflist.Event) void {
+const HunkOp = enum { stage, unstage, discard };
+
+/// Stages, unstages or discards one run of changes of an entry, reading
+/// the index and the file again first.
+fn hunkOp(wb: *Workbench, c: *ui.Context, dl: *difflist.DiffList, ei: usize, k: usize, op: HunkOp) void {
     const t = top(wb) orelse return;
-    const e = dl.current() orelse return;
-    dl.reload(reader(wb));
+    if (ei >= dl.entries.items.len) return;
+    const e = &dl.entries.items[ei];
+    dl.load(e, reader(wb));
     const hs = hunks.hunksOf(c.alloc(), e.old_text, e.new_text) catch return;
-    if (k >= hs.len) return;
+    if (k >= hs.len) {
+        _ = wb.toasts.show("The change moved: look again");
+        return;
+    }
     const h = hs[k];
     const g = wb.gpa;
-    switch (ev) {
-        .stage_hunk => {
+    switch (op) {
+        .stage => {
             // The index gets the work tree's lines of this hunk.
             const out = hunks.apply(g, .{ .a = e.old_text, .b = e.new_text }, h, .b) catch return;
             defer g.free(out);
             hunks.writeIndex(g, wb.io, t, e.path, out) catch |err| wb.toastError("Couldn't stage", @errorName(err));
         },
-        .unstage_hunk => {
+        .unstage => {
             const out = hunks.apply(g, .{ .a = e.old_text, .b = e.new_text }, h, .a) catch return;
             defer g.free(out);
             hunks.writeIndex(g, wb.io, t, e.path, out) catch |err| wb.toastError("Couldn't unstage", @errorName(err));
         },
-        .discard_hunk => {
+        .discard => {
             const out = hunks.apply(g, .{ .a = e.old_text, .b = e.new_text }, h, .a) catch return;
             defer g.free(out);
             const abs = joinNative(g, t, e.path) catch return;
@@ -560,13 +601,8 @@ fn hunkOp(wb: *Workbench, c: *ui.Context, dl: *difflist.DiffList, k: usize, ev: 
                 d.editor.area.setText(out);
             } else fs.write(wb.io, abs, out) catch |err| wb.toastError("Couldn't discard", @errorName(err));
         },
-        else => {},
     }
     wb.refreshGit();
-    if (wb.editors.current()) |it| switch (it.body) {
-        .changes => |ch| ch.rebuild(wb.scm.changes, wb.scm.generation),
-        else => {},
-    };
     dl.reload(reader(wb));
 }
 

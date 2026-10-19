@@ -11,6 +11,8 @@ const conflicts = @import("conflicts.zig");
 
 pub const Mark = enum(u8) { none, added, changed, removed };
 
+pub const Note = struct { line: usize, text: []const u8, color: ui.Color };
+
 pub const Colors = struct {
     added: ui.Color = .hex(0x4fa86d),
     changed: ui.Color = .hex(0x5a8ee0),
@@ -57,12 +59,15 @@ pub const Doc = struct {
     last_line: usize = 0,
     /// Lines with review comments (from 0), set by the workbench.
     comment_lines: []const [2]usize = &.{},
+    /// Text after lines' ends, set by the workbench each frame: the caret
+    /// line's blame, the review comments after their last line.
+    notes: []const Note = &.{},
 
     pub fn create(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !*Doc {
         const d = try gpa.create(Doc);
         errdefer gpa.destroy(d);
         d.* = .{ .gpa = gpa, .io = io, .path = try gpa.dupe(u8, path), .editor = .init(gpa, "", if (path.len > 0) std.fs.path.basename(path) else null) };
-        d.editor.extra = .{ .ctx = d, .marks = lineMarks, .gutter = gutterMark };
+        d.editor.extra = .{ .ctx = d, .marks = lineMarks, .gutter = gutterMark, .after = afterLine };
         if (path.len > 0) try d.read();
         d.saved = d.editor.area.doc.version;
         d.seen = d.saved;
@@ -251,6 +256,12 @@ fn gutterMark(ctx: *anyopaque, _: *ui.Context, line: usize) ?ui.Color {
         .changed => colors.changed,
         .removed => colors.removed,
     };
+}
+
+fn afterLine(ctx: *anyopaque, _: *ui.Context, line: usize) ?ui.TextAfter {
+    const d: *Doc = @ptrCast(@alignCast(ctx));
+    for (d.notes) |n| if (n.line == line) return .{ .text = n.text, .color = n.color };
+    return null;
 }
 
 fn isWordByte(b: u8) bool {

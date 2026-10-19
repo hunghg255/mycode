@@ -22,25 +22,31 @@ pub const Changes = struct {
         ch.gpa.destroy(ch);
     }
 
-    /// Makes the list again from Git's status, keeping the file chosen.
+    /// Makes the list again from Git's status, keeping what was folded and
+    /// the file in view.
     pub fn rebuild(ch: *Changes, changes: []const git.Change, generation: u64) void {
         if (generation == ch.seen) return;
         ch.seen = generation;
         const g = ch.gpa;
+        // What to keep, by group and path.
+        var folded: std.StringHashMapUnmanaged(void) = .empty;
+        defer {
+            var it = folded.keyIterator();
+            while (it.next()) |k| g.free(k.*);
+            folded.deinit(g);
+        }
+        for (ch.list.entries.items) |e| if (e.folded) {
+            const k = std.fmt.allocPrint(g, "{s}\x00{s}", .{ e.group, e.path }) catch continue;
+            folded.put(g, k, {}) catch g.free(k);
+        };
         var keep: ?[]u8 = null;
         defer if (keep) |k| g.free(k);
-        var keep_staged = false;
-        if (ch.list.current()) |e| {
-            keep = g.dupe(u8, e.path) catch null;
-            keep_staged = e.staged;
-        }
-        const hunk = ch.list.hunk;
+        if (ch.list.current()) |e| keep = g.dupe(u8, e.path) catch null;
+
         ch.list.clear();
         var buf: [std.fs.max_path_bytes + 8]u8 = undefined;
         var buf2: [std.fs.max_path_bytes + 8]u8 = undefined;
         for (changes) |c| if (c.status() == .conflict) {
-            const new = std.fmt.bufPrint(&buf, ":{s}", .{c.path}) catch continue;
-            _ = new;
             ch.list.add(c.path, null, 'C', "Merge Changes", false, std.fmt.bufPrint(&buf2, "HEAD:{s}", .{c.path}) catch continue, "@") catch {};
         };
         for (changes) |c| if (c.staged()) {
@@ -56,11 +62,12 @@ pub const Changes = struct {
         for (changes) |c| if (c.status() == .untracked) {
             ch.list.add(c.path, null, 'U', "Untracked", false, "", "@") catch {};
         };
-        if (keep) |k| {
-            for (ch.list.entries.items, 0..) |e, i| if (std.mem.eql(u8, e.path, k) and e.staged == keep_staged) {
-                ch.list.selected = i;
-                ch.list.hunk = hunk;
-                break;
+        for (ch.list.entries.items, 0..) |*e, i| {
+            var kb: [std.fs.max_path_bytes + 40]u8 = undefined;
+            const k = std.fmt.bufPrint(&kb, "{s}\x00{s}", .{ e.group, e.path }) catch continue;
+            if (folded.contains(k)) e.folded = true;
+            if (keep) |kp| if (std.mem.eql(u8, kp, e.path)) {
+                ch.list.selected_entry = i;
             };
         }
     }

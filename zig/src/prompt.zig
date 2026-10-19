@@ -16,6 +16,7 @@ pub const Purpose = enum {
     rename_branch,
     new_tag,
     review_comment,
+    diff_comment,
     commit_message,
 };
 
@@ -63,7 +64,7 @@ pub const Prompt = struct {
 
     /// The answer, in the frame it is given; null otherwise.
     pub fn view(p: *Prompt, c: *ui.Context) ?[]const u8 {
-        const d = ui.dialog(c, &p.dialog, .{ .width = .{ .px = if (p.purpose == .review_comment) 520 else 420 } }) orelse {
+        const d = ui.dialog(c, &p.dialog, .{ .width = .{ .px = if (p.area != null) 520 else 420 } }) orelse {
             if (p.area) |*a| if (!p.dialog.open) {
                 a.deinit();
                 p.area = null;
@@ -73,7 +74,7 @@ pub const Prompt = struct {
         defer d.end();
         ui.text(c, p.title[0..p.title_len], .{ .size = 14, .weight = .semibold });
         var answer: ?[]const u8 = null;
-        if (p.purpose == .review_comment) {
+        if (p.purpose == .review_comment or p.purpose == .diff_comment) {
             const a = &(p.area.?);
             const id = c.peekId(null);
             if (p.focus > 0) {

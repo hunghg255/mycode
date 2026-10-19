@@ -103,6 +103,12 @@ fn answer(wb: *Workbench, c: *ui.Context, a: []const u8) void {
             std.mem.replaceScalar(u8, @constCast(rel), '\\', '/');
             wb.review.put(rel, first, last, snippet, a) catch {};
         },
+        .diff_comment => {
+            var it = std.mem.splitScalar(u8, target, ':');
+            const first = std.fmt.parseInt(usize, it.next() orelse "0", 10) catch 0;
+            const last = std.fmt.parseInt(usize, it.next() orelse "0", 10) catch first;
+            wb.review.putDiff(it.rest(), first, last, wb.diff_comment.items, a) catch {};
+        },
         else => _ = wbgit.promptAnswer(wb, p.purpose, a, target),
     }
 }

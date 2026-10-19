@@ -13,6 +13,8 @@ pub const Comment = struct {
     snippet: []u8,
     text: []u8,
     outdated: bool = false,
+    /// Made in a diff: its snippet is the rows, with + and -.
+    diff: bool = false,
 };
 
 pub const Review = struct {
@@ -52,6 +54,14 @@ pub const Review = struct {
         });
     }
 
+    /// A comment on rows of a diff.
+    pub fn putDiff(r: *Review, path: []const u8, first: usize, last: usize, snippet: []const u8, text: []const u8) !void {
+        try r.put(path, first, last, snippet, text);
+        for (r.list.items) |*c| if (std.mem.eql(u8, c.path, path) and c.first == first and c.last == last) {
+            c.diff = true;
+        };
+    }
+
     pub fn remove(r: *Review, i: usize) void {
         free(r.gpa, r.list.orderedRemove(i));
     }
@@ -72,7 +82,7 @@ pub const Review = struct {
     /// Finds each comment's lines again in a file's new text.
     pub fn follow(r: *Review, path: []const u8, text: []const u8) void {
         for (r.list.items) |*c| {
-            if (!std.mem.eql(u8, c.path, path)) continue;
+            if (c.diff or !std.mem.eql(u8, c.path, path)) continue;
             const at_ = std.mem.indexOf(u8, text, c.snippet) orelse {
                 c.outdated = true;
                 continue;
@@ -94,7 +104,7 @@ pub const Review = struct {
             if (numbered) try out.print(gpa, "{d}. ", .{i + 1});
             if (c.first == c.last) try out.print(gpa, "{s}:{d}", .{ c.path, c.first + 1 }) else try out.print(gpa, "{s}:{d}-{d}", .{ c.path, c.first + 1, c.last + 1 });
             if (c.outdated) try out.appendSlice(gpa, " (outdated)");
-            const lang = std.mem.trimStart(u8, std.fs.path.extension(c.path), ".");
+            const lang = if (c.diff) "diff" else std.mem.trimStart(u8, std.fs.path.extension(c.path), ".");
             try out.print(gpa, "\n```{s}\n{s}", .{ lang, c.snippet });
             if (c.snippet.len == 0 or c.snippet[c.snippet.len - 1] != '\n') try out.append(gpa, '\n');
             try out.print(gpa, "```\n{s}\n", .{c.text});

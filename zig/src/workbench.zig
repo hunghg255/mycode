@@ -91,6 +91,8 @@ pub const Workbench = struct {
     toast_stage_conflicts: u64 = 0,
     toast_restore_branch: u64 = 0,
     restore_branch: std.ArrayList(u8) = .empty,
+    /// The rows of a diff a comment is being written on.
+    diff_comment: std.ArrayList(u8) = .empty,
     /// The caret's line's last change (inline blame), and what it was asked for.
     blame: std.ArrayList(u8) = .empty,
     blame_key: u64 = 0,
@@ -157,6 +159,7 @@ pub const Workbench = struct {
         wb.confirm_title.deinit(wb.gpa);
         wb.confirm_text.deinit(wb.gpa);
         wb.restore_branch.deinit(wb.gpa);
+        wb.diff_comment.deinit(wb.gpa);
         wb.blame.deinit(wb.gpa);
         wb.gpa.free(wb.syms);
         wb.gpa.free(wb.syms_text);
