@@ -284,6 +284,8 @@ pub const Shell = struct {
             .theme_matrix => st.setString("theme", "matrix"),
             .theme_claude => st.setString("theme", "claude"),
             .theme_qoder => st.setString("theme", "qoder"),
+            .icons_material => st.setString("iconTheme", ""),
+            .icons_lucide => st.setString("iconTheme", "lucide"),
             .appearance_system => st.setString("appearance", ""),
             .appearance_light => st.setString("appearance", "light"),
             .appearance_dark => st.setString("appearance", "dark"),
@@ -309,6 +311,8 @@ pub const Shell = struct {
         // The window's own light or dark (the system's), before the theme's.
         const dark = if (std.mem.eql(u8, s.theme, "matrix")) true else if (std.mem.eql(u8, s.appearance, "light")) false else if (std.mem.eql(u8, s.appearance, "dark")) true else c.theme.dark;
         sh.palette = themes.palette(s.theme, dark);
+        @import("icons.zig").palette = sh.palette;
+        @import("icons.zig").lucide_theme = std.mem.eql(u8, s.iconTheme, "lucide");
         const fam = std.mem.trim(u8, std.mem.sliceTo(s.fontFamily, ','), " ");
         const mono: ?[]const u8 = if (std.ascii.eqlIgnoreCase(fam, "monospace") or fam.len == 0) null else fam;
         ui.themes.apply(c, themes.uiTheme(sh.palette, mono));

@@ -21,6 +21,8 @@ pub const Settings = struct {
     terminalProfiles: []const Profile = &.{},
     theme: []const u8 = "",
     appearance: []const u8 = "",
+    /// "" (the Material Icon Theme) or "lucide".
+    iconTheme: []const u8 = "",
     filesExclude: []const []const u8 = &.{},
     sidebarRight: bool = false,
     projectTabs: bool = true,

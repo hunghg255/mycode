@@ -238,7 +238,7 @@ pub const Explorer = struct {
             const color = if (mark) |m| colors.of(m) else if (ignored) faint else t.text;
             const cell = ui.div(c).row().grow().h(22).gap(6).itemsCenter();
             if (dir) {
-                ui.icon(c, if (e.state.isOpen(r.item)) "folder" else "folder", .{ .size = 12, .frame = 14, .color = if (ignored) faint else t.muted });
+                icons.folder(c, name, e.state.isOpen(r.item));
             } else icons.file(c, name);
             ui.text(c, name, .{ .size = 13, .color = color });
             ui.spacer(c);
