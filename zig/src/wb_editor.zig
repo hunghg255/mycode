@@ -408,8 +408,13 @@ fn updateSymbols(wb: *Workbench, d: *Doc) void {
 
 fn welcome(wb: *Workbench, c: *ui.Context) void {
     const t = c.theme;
-    ui.column(c, .{ .width = .fill, .height = .fill, .align_items = .center, .justify = .center, .gap = 10 });
+    ui.column(c, .{ .width = .fill, .height = .fill, .align_items = .center, .justify = .center, .gap = 10, .clip = true });
     defer ui.end(c);
+    // The Matrix's rain falls behind it while the window has the keyboard.
+    if (std.mem.eql(u8, wb.shell.store.s.theme, "matrix")) {
+        const p = wb.shell.palette;
+        @import("rain.zig").draw(c, &wb.shell.rain, c.size.w, c.size.h, .hex(p.text), .hex(p.accent), wb.shell.has_focus);
+    }
     wb.shell.logo(c, 96);
     ui.text(c, "MyCode", .{ .size = 36, .weight = .bold, .color = t.muted });
     ui.text(c, wb.name(), .{ .size = 14, .color = t.muted });

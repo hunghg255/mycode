@@ -41,6 +41,9 @@ pub const Shell = struct {
     /// clears the focus as it opens.
     recent_focus: u8 = 0,
     zoom: f32 = 1,
+    rain: @import("rain.zig").Rain = .{},
+    /// The window has the keyboard (the rain moves only then).
+    has_focus: bool = true,
 
     pub fn create(main: *Main) !*Shell {
         const sh = try main.gpa.create(Shell);
@@ -515,10 +518,12 @@ pub const Shell = struct {
         switch (ev) {
             // Auto save when the window loses the keyboard; look again when it comes back.
             .blur => {
+                sh.has_focus = false;
                 if (sh.store.s.autoSave) if (sh.active()) |wb| wb.editors.saveAll();
                 sh.main.saveState();
             },
             .focus => {
+                sh.has_focus = true;
                 sh.main.focused = sh;
                 if (sh.store.reload()) {}
                 sh.main.loadKeysIfChanged();
