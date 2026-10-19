@@ -34,6 +34,8 @@ pub const Event = union(enum) {
     unstage_all,
     discard_all: Group,
     stash_files: []const []const u8,
+    /// A change pressed: it may be dragged into a column (relative path).
+    press: []const u8,
 };
 
 pub const Scm = struct {
@@ -422,6 +424,7 @@ pub const Scm = struct {
         ui.text(c, c.print("{c}", .{letter}), .{ .size = 11, .mono = true, .color = colors.of(st) });
         const ri = row.interaction();
         row.end();
+        if (ri.pressed and c.input.pressed and act == .none and st != .deleted) act = .{ .press = ch.path };
         if ((ri.clicked or ri.double_clicked) and act == .none) {
             if (c.input.shift and s.anchor != null) {
                 // A range, from where the last click was, in the rows' order.

@@ -282,6 +282,8 @@ pub const Event = union(enum) {
     replace_all,
     replace_file: usize,
     replace_match: struct { file: usize, match: usize },
+    /// A match pressed: its file may be dragged into a column (relative path).
+    press: []const u8,
 };
 
 pub const Search = struct {
@@ -497,6 +499,7 @@ pub const Search = struct {
                     }
                     const ia = row.interaction();
                     row.end();
+                    if (ev == .none and ia.pressed and c.input.pressed) ev = .{ .press = r.path };
                     if (ev == .none and (ia.clicked or ia.double_clicked)) {
                         s.selected = .{ fi, k };
                         ev = .{ .open = .{ .path = r.path, .line = m.line, .col = m.col, .len = m.end - m.start, .keep = ia.double_clicked } };

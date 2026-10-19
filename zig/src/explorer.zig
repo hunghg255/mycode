@@ -21,6 +21,8 @@ pub const Event = union(enum) {
     open_terminal: []const u8,
     /// Files copied (in File Explorer, or here) pasted into a folder.
     paste: []const u8,
+    /// A file pressed: it may be dragged into a column or a terminal.
+    press: []const u8,
 };
 
 pub const Explorer = struct {
@@ -258,6 +260,7 @@ pub const Explorer = struct {
             }
             const ia = cell.interaction();
             cell.end();
+            if (ia.pressed and c.input.pressed and !dir and ev == .none) ev = .{ .press = r.item };
             if (ia.double_clicked) {
                 if (!dir) ev = .{ .open = .{ .path = r.item, .preview = false } };
             } else if (ia.clicked) {

@@ -236,6 +236,12 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         },
         .unstage_all => _ = quick(wb, &.{ "reset", "-q", "HEAD", "--", "." }),
         .discard_all => wb.ask(.discard_all, "", "Discard all changes?", "Every change not staged is lost, and untracked files go to the Recycle Bin.", &.{ "Cancel", "Discard All" }),
+        .press => |rel| {
+            const t = top(wb) orelse return;
+            const abs = joinNative(g, t, rel) catch return;
+            defer g.free(abs);
+            @import("wb_files.zig").startFileDrag(wb, c, abs);
+        },
         .stash_files => |ps| {
             const list = std.mem.join(c.alloc(), "\n", ps) catch return;
             wb.prompt.ask(.stash_files, if (ps.len == 1) "Stash this file: a message (or none)" else "Stash these files: a message (or none)", "", list);

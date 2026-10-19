@@ -91,6 +91,8 @@ pub const Workbench = struct {
     toast_stage_conflicts: u64 = 0,
     toast_restore_branch: u64 = 0,
     restore_branch: std.ArrayList(u8) = .empty,
+    /// A file dragged from the sidebar.
+    file_drag: ?struct { path: []u8, start: ui.Point, moving: bool = false } = null,
     /// The rows of a diff a comment is being written on.
     diff_comment: std.ArrayList(u8) = .empty,
     /// The caret's line's last change (inline blame), and what it was asked for.
@@ -163,6 +165,7 @@ pub const Workbench = struct {
         wb.confirm_text.deinit(wb.gpa);
         wb.restore_branch.deinit(wb.gpa);
         wb.diff_comment.deinit(wb.gpa);
+        if (wb.file_drag) |fd| wb.gpa.free(fd.path);
         wb.blame.deinit(wb.gpa);
         wb.gpa.free(wb.syms);
         wb.gpa.free(wb.syms_text);
@@ -372,6 +375,7 @@ pub const Workbench = struct {
         wbeditor.statusBar(wb, c);
         ui.end(c);
         wb.editors.endDrag(c);
+        wbfiles.fileDragFrame(wb, c);
         wbfiles.overlays(wb, c);
     }
 

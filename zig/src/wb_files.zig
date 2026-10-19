@@ -28,7 +28,74 @@ pub fn explorerEvent(wb: *Workbench, c: *ui.Context, ev: explorer_mod.Event) voi
         .open_changes => |p| wbgit.openChangesTab(wb, p, true),
         .open_terminal => |dir| newTerminalAt(wb, dir),
         .paste => |dir| pasteFiles(wb, dir),
+        .press => |p| startFileDrag(wb, c, p),
     }
+}
+
+/// A file pressed in the Explorer, Source Control or Search: dragged far
+/// enough, it goes where it is let go.
+pub fn startFileDrag(wb: *Workbench, c: *ui.Context, path: []const u8) void {
+    if (wb.file_drag) |fd| wb.gpa.free(fd.path);
+    wb.file_drag = .{ .path = wb.gpa.dupe(u8, path) catch return, .start = c.input.mouse };
+}
+
+/// The file being dragged: its ghost follows the pointer; let go on a
+/// column's strip or body it opens there, on a column's right edge in a
+/// new column, on a terminal its path is typed.
+pub fn fileDragFrame(wb: *Workbench, c: *ui.Context) void {
+    const fd = &(wb.file_drag orelse return);
+    if (c.input.down) {
+        const m = c.input.mouse;
+        if (!fd.moving and (@abs(m.x - fd.start.x) > 8 or @abs(m.y - fd.start.y) > 8)) fd.moving = true;
+        if (fd.moving) {
+            c.wants_moves = true;
+            const ghost = ui.div(c).row().absolute().offset(m.x + 10, m.y + 8).px(8).py(4).gap(6).itemsCenter().rounded(4).bg(c.theme.surface_hover).border(c.theme.border);
+            @import("icons.zig").file(c, std.fs.path.basename(fd.path));
+            ui.text(c, std.fs.path.basename(fd.path), .{ .size = 12 });
+            ghost.end();
+        }
+        return;
+    }
+    defer {
+        wb.gpa.free(fd.path);
+        wb.file_drag = null;
+    }
+    if (!fd.moving) return;
+    const p = c.input.mouse;
+    const paths = [_][]const u8{fd.path};
+    // A terminal: the path is typed into it.
+    for (wb.panel.terms.items) |t| if (wb.panel.open and t.rect != null and t.rect.?.contains(p)) return t.typePaths(&paths);
+    const ed = &wb.editors;
+    const n = @min(ed.cols.items.len, ed.strip_rects.len);
+    for (0..n) |ci| if (ed.cols.items[ci].current()) |it| switch (it.body) {
+        .terminal => |t| if (t.rect != null and t.rect.?.contains(p)) return t.typePaths(&paths),
+        else => {},
+    };
+    for (0..n) |ci| {
+        const strip = ed.strip_rects[ci];
+        const body = ed.body_rects[ci];
+        if (!strip.contains(p) and !body.contains(p)) continue;
+        var target = ci;
+        if (body.contains(p) and p.x > body.x + body.w - 60) target = ed.addColumn(ci + 1) catch ci;
+        openIn(wb, fd.path, target);
+        c.changed = true;
+        return;
+    }
+}
+
+/// Opens a file in a column (a locked one too, when dropped there).
+fn openIn(wb: *Workbench, path: []const u8, col: usize) void {
+    const ed = &wb.editors;
+    if (ed.findPath(path)) |l| {
+        if (l.col != col) ed.move(l, col, null) else ed.show(l);
+        return;
+    }
+    const body: @import("columns.zig").Body = if (@import("viewer.zig").isImage(path))
+        .{ .image = @import("viewer.zig").Image.create(wb.gpa, wb.io, path) catch return }
+    else
+        .{ .file = @import("doc.zig").Doc.create(wb.gpa, wb.io, path) catch return };
+    const it = ed.newItem(body, false) catch return;
+    _ = ed.add(it, col) catch {};
 }
 
 /// Copies the files on the clipboard into a folder; a name taken gets
@@ -195,6 +262,12 @@ pub fn searchEvent(wb: *Workbench, c: *ui.Context, ev: search_mod.Event) void {
         .replace_all => replaceIn(wb, c, null),
         .replace_file => |fi| replaceIn(wb, c, fi),
         .replace_match => |m| replaceIn(wb, c, m.file),
+        .press => |rel| {
+            const abs = std.fs.path.join(wb.gpa, &.{ wb.root, rel }) catch return;
+            defer wb.gpa.free(abs);
+            if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, abs, '/', std.fs.path.sep);
+            startFileDrag(wb, c, abs);
+        },
     }
 }
 
