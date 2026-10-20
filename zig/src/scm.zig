@@ -87,6 +87,11 @@ pub const Event = union(enum) {
     graph: Graph.Event,
     /// A change pressed: it may be dragged into a column (relative path).
     press: []const u8,
+    /// The Changes tab of every change.
+    open_all,
+    /// A change shown in the Explorer, its path copied (relative).
+    reveal: []const u8,
+    copy_path: []const u8,
 };
 
 pub const Scm = struct {
@@ -109,6 +114,10 @@ pub const Scm = struct {
     graph: Graph,
     commit_menu: ui.Menu = .{},
     more_menu: ui.Menu = .{},
+    /// The repository has a remote: fetching, pulling and pushing show.
+    has_remote: bool = false,
+    /// The branch's upstream, as `origin/main`.
+    upstream: ?[]u8 = null,
     row_menu: ui.Menu = .{},
     /// The files chosen (Shift and Ctrl clicks), and where a range began.
     chosen: std.ArrayList([]u8) = .empty,
@@ -132,6 +141,7 @@ pub const Scm = struct {
     }
 
     pub fn deinit(s: *Scm) void {
+        if (s.upstream) |u| s.gpa.free(u);
         s.clear();
         s.clearChosen();
         s.chosen.deinit(s.gpa);
@@ -231,6 +241,12 @@ pub const Scm = struct {
         if (s.branch) |b| s.gpa.free(b);
         s.branch = git.branch(s.gpa, s.io, top);
         s.ab = branches.aheadBehind(s.gpa, s.io, top);
+        if (s.upstream) |u| s.gpa.free(u);
+        s.upstream = if (s.ab.upstream) git.line(s.gpa, s.io, top, &.{ "rev-parse", "--abbrev-ref", "@{upstream}" }) else null;
+        if (git.line(s.gpa, s.io, top, &.{"remote"})) |r| {
+            s.has_remote = r.len > 0;
+            s.gpa.free(r);
+        } else s.has_remote = false;
         if (s.git_dir == null) s.git_dir = git.line(s.gpa, s.io, top, &.{ "rev-parse", "--absolute-git-dir" });
         s.op = if (s.git_dir) |d| Op.of(s.io, d) else .none;
         if (s.commits_open) s.graph.load(s.io, top);
@@ -285,69 +301,43 @@ pub const Scm = struct {
         const t = c.theme;
         var ev: Event = .none;
         if (s.top == null) {
-            ui.column(c, .{ .width = .fill, .padding = .all(12), .gap = 10 });
-            defer ui.end(c);
-            ui.text(c, "The folder isn't in a Git repository.", .{ .size = 12, .color = t.muted, .wrap = true });
+            // As the Go app's: what that means, and a button to make it one.
+            const col = ui.div(c).column().wFull().pt(28).px(20).pb(16).gap(8).itemsCenter();
+            defer col.end();
+            ring(c, "arrow.triangle.branch", t.muted, t.text.alpha(0.06));
+            ui.text(c, "No Git Repository", .{ .size = 13, .weight = .semibold, .color = t.text });
+            centered(c, "The folder is not in a Git repository. Make it one to track and commit its changes.");
+            _ = c.leaf(.{ .height = .{ .px = 4 } }, .none, null);
             if (ui.button(c, "Initialize Repository", .{ .variant = .primary, .width = .fill, .size = 13 }).clicked) ev = .{ .run = .git_init };
             return ev;
         }
         ui.column(c, .{ .width = .fill, .height = .fill });
         defer ui.end(c);
         if (busy) _ = c.leaf(.{ .width = .fill, .height = .{ .px = 2 }, .background = t.accent.alpha(0.6) }, .none, null);
-        // The branch, with fetch, pull and push.
+        // The branch, which a click switches, and the buttons of its remote,
+        // which say how many commits they would bring.
         {
-            const bar = ui.div(c).row().wFull().h(28).px(10).gap(4).itemsCenter();
+            const bar = ui.div(c).row().wFull().h(30).px(8).gap(2).itemsCenter();
             defer bar.end();
-            const b = ui.div(c).row().h(22).px(4).gap(4).itemsCenter().rounded(4).hover(t.surface_hover);
-            icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .color = t.muted });
-            ui.text(c, s.branch orelse "(no branch)", .{ .size = 12 });
-            if (b.clicked()) ev = .{ .run = .git_switch_branch };
+            const b = ui.div(c).row().h(24).px(6).gap(5).itemsCenter().rounded(5).hover(t.surface_hover);
+            icons.sym(c, "arrow.triangle.branch", .{ .size = 10.5, .color = t.muted });
+            ui.text(c, s.branch orelse "No Branch", .{ .size = 12.5, .weight = .medium });
+            icons.sym(c, "chevron.down", .{ .size = 8.5, .color = t.muted.alpha(0.7) });
+            const bi = b.interaction();
             b.end();
+            ui.tooltip(c, bi, "Switch Branch…");
+            if (bi.clicked and !busy) ev = .{ .run = .git_switch_branch };
             ui.spacer(c);
-            if (!s.ab.upstream and s.branch != null) {
-                if (ui.button(c, "Publish Branch", .{ .variant = .ghost, .size = 11 }).clicked) ev = .{ .run = .git_push };
-            } else {
-                if (ui.button(c, "Fetch", .{ .variant = .ghost, .size = 11 }).clicked) ev = .{ .run = .git_fetch };
-                if (ui.button(c, c.print("↓{d}", .{s.ab.behind}), .{ .variant = .ghost, .size = 11 }).clicked) ev = .{ .run = .git_pull };
-                if (ui.button(c, c.print("↑{d}", .{s.ab.ahead}), .{ .variant = .ghost, .size = 11 }).clicked) ev = .{ .run = .git_push };
-            }
-            const more = ui.div(c).w(22).h(22).center().rounded(4).hover(t.surface_hover);
-            ui.text(c, "⋯", .{ .size = 12, .color = t.muted });
-            const mi = more.interaction();
-            more.end();
-            if (ui.buttonMenu(c, &s.more_menu, mi)) |m| {
-                defer m.end();
-                const items = [_]struct { []const u8, @import("commands.zig").Cmd }{
-                    .{ "Commit", .git_commit },              .{ "Amend Last Commit", .git_commit_amend }, .{ "Undo Last Commit", .git_undo_commit },
-                    .{ "Fetch", .git_fetch },                .{ "Pull", .git_pull },                      .{ "Pull (Rebase)", .git_pull_rebase },
-                    .{ "Pull (Merge)", .git_pull_merge },    .{ "Push", .git_push },                      .{ "Force Push…", .git_force_push },
-                    .{ "Sync", .git_sync },                  .{ "Switch Branch…", .git_switch_branch }, .{ "Create Branch…", .git_create_branch },
-                    .{ "Rename Branch…", .git_rename_branch }, .{ "Delete Branch…", .git_delete_branch },
-                };
-                for (items, 0..) |it, k| {
-                    if (k == 3 or k == 10) m.separator();
-                    if (m.item(it[0], .{})) ev = .{ .run = it[1] };
+            if (s.has_remote) {
+                if (syncButton(c, "icloud.and.arrow.down", "Fetch", 0, busy)) ev = .{ .run = .git_fetch };
+                if (!s.ab.upstream and s.branch != null) {
+                    if (syncButton(c, "square.and.arrow.up", "Publish Branch", 0, busy)) ev = .{ .run = .git_push };
+                } else {
+                    const behind = s.ab.behind;
+                    const ahead = s.ab.ahead;
+                    if (syncButton(c, "square.and.arrow.down", if (behind > 0) c.print("Pull {d} commit{s}", .{ behind, plural(behind) }) else "Pull", behind, busy)) ev = .{ .run = .git_pull };
+                    if (syncButton(c, "square.and.arrow.up", if (ahead > 0) c.print("Push {d} commit{s}", .{ ahead, plural(ahead) }) else "Push", ahead, busy)) ev = .{ .run = .git_push };
                 }
-                if (m.submenu("Stash")) |sub| {
-                    defer sub.end();
-                    const st = [_]struct { []const u8, @import("commands.zig").Cmd }{
-                        .{ "Stash…", .git_stash },                 .{ "Stash (Include Untracked)…", .git_stash_untracked },
-                        .{ "Apply Latest Stash", .git_stash_apply_latest }, .{ "Pop Latest Stash", .git_stash_pop },
-                        .{ "Apply Stash…", .git_stash_apply },     .{ "Pop Stash…", .git_stash_pop_pick },
-                        .{ "View Stash…", .git_stash_view },       .{ "Drop Stash…", .git_stash_drop },
-                    };
-                    for (st) |it| if (sub.item(it[0], .{})) {
-                        ev = .{ .run = it[1] };
-                    };
-                }
-                m.separator();
-                if (m.item("Stage All Changes", .{})) ev = .{ .stage_all = .changes };
-                if (m.item("Unstage All Changes", .{})) ev = .unstage_all;
-                if (m.item("Discard All Changes", .{})) ev = .{ .discard_all = .changes };
-                m.separator();
-                if (m.item("View as Tree", .{ .checked = s.tree })) ev = .{ .run = .scm_tree };
-                if (m.item("Show All Branches", .{ .checked = s.graph.all })) ev = .{ .run = .show_all_branches };
-                if (m.item("Refresh", .{})) ev = .{ .run = .git_refresh };
             }
         }
         if (s.amending) {
@@ -369,12 +359,30 @@ pub const Scm = struct {
             ui.column(c, .{ .width = .fill, .padding = .xy(10, 4), .gap = 6 });
             defer ui.end(c);
             const r = ui.textField(c, &s.message, .{ .width = .fill, .placeholder = c.print("Message ({s} to commit)", .{ui.keys.label("⌘↵")}), .size = 13 });
-            const summary = std.mem.sliceTo(s.message.text(), '\n');
-            if (summary.len > 50) ui.text(c, c.print("{d} characters in the summary", .{summary.len}), .{ .size = 11, .color = if (summary.len > 72) t.danger else t.muted });
+            // The first line's length, once past what a summary should be.
+            const summary = std.mem.trimEnd(u8, std.mem.sliceTo(s.message.text(), '\n'), " \t\r");
+            const chars = std.unicode.utf8CountCodepoints(summary) catch summary.len;
+            if (chars > 50) {
+                const long = chars > 72;
+                const note = ui.div(c).row().wFull().px(2);
+                const col = if (long) colors.modified else t.muted.alpha(0.7);
+                const words = ui.div(c).grow();
+                ui.text(c, if (long) "Summary is long" else "Summary", .{ .size = 11, .color = col });
+                words.end();
+                ui.text(c, c.print("{d}/72", .{chars}), .{ .size = 11, .color = col, .mono = true });
+                note.end();
+            }
             const nothing_staged = s.count(.staged) == 0;
             const label = if (s.amending) "Amend Commit" else if (nothing_staged and s.changes.len > 0) "Commit All" else "Commit";
             ui.row(c, .{ .width = .fill, .gap = 2 });
-            if (ui.button(c, label, .{ .variant = .primary, .width = .fill, .size = 13 }).clicked or
+            const cbi = ui.button(c, label, .{ .variant = .primary, .width = .fill, .size = 13, .icon = "checkmark" });
+            ui.tooltip(c, cbi, if (s.amending)
+                "Amend the last commit with the staged changes (Ctrl+Enter)"
+            else if (nothing_staged and s.changes.len > 0)
+                "Stage every change and commit it (Ctrl+Enter)"
+            else
+                "Commit the staged changes (Ctrl+Enter)");
+            if (cbi.clicked or
                 (r.focused and c.shortcut(.{ .key = ui.Shortcut.enter, .cmd = true })) or r.submitted)
                 ev = .{ .commit = .{ .all = nothing_staged and !s.amending, .amend = s.amending, .push = false } };
             if (ui.menuButton(c, "", &s.commit_menu, .{ .size = 12 })) |m| {
@@ -414,16 +422,46 @@ pub const Scm = struct {
             if (c.shortcut(.{ .key = ui.Shortcut.escape })) s.clearChosen();
         }
         if (s.changes.len == 0) {
-            ui.column(c, .{ .width = .fill, .padding = .xy(12, 8), .gap = 6 });
-            ui.text(c, "No changes.", .{ .size = 12, .color = t.muted });
-            if (s.ab.ahead > 0 and s.ab.behind > 0) {
-                if (ui.button(c, "Sync", .{ .size = 12, .width = .fill }).clicked) ev = .{ .run = .git_sync };
-            } else if (s.ab.ahead > 0) {
-                if (ui.button(c, c.print("Push {d} commits", .{s.ab.ahead}), .{ .size = 12, .width = .fill }).clicked) ev = .{ .run = .git_push };
-            } else if (s.ab.behind > 0) {
-                if (ui.button(c, c.print("Pull {d} commits", .{s.ab.behind}), .{ .size = 12, .width = .fill }).clicked) ev = .{ .run = .git_pull };
+            // As the Go app's: that it is clean, how the branch stands with
+            // its upstream, and a button to bring them level.
+            const col = ui.div(c).column().wFull().pt(24).px(20).pb(16).gap(6).itemsCenter();
+            ring(c, "checkmark", colors.added, colors.added.alpha(0.13));
+            _ = c.leaf(.{ .height = .{ .px = 2 } }, .none, null);
+            ui.text(c, "No Changes", .{ .size = 13, .weight = .semibold, .color = t.text });
+            const br = s.branch orelse "";
+            const ab = s.ab;
+            const up = s.upstream orelse "its upstream";
+            centered(c, if (br.len == 0)
+                "The working tree is clean."
+            else if (!ab.upstream and !s.has_remote)
+                c.print("{s} is clean.", .{br})
+            else if (!ab.upstream)
+                c.print("{s} is clean, and not yet published.", .{br})
+            else if (ab.ahead > 0 and ab.behind > 0)
+                c.print("{s} is clean, {d} commit{s} ahead of {s} and {d} commit{s} behind.", .{ br, ab.ahead, plural(ab.ahead), up, ab.behind, plural(ab.behind) })
+            else if (ab.ahead > 0)
+                c.print("{s} is clean, {d} commit{s} ahead of {s}.", .{ br, ab.ahead, plural(ab.ahead), up })
+            else if (ab.behind > 0)
+                c.print("{s} is clean, {d} commit{s} behind {s}.", .{ br, ab.behind, plural(ab.behind), up })
+            else
+                c.print("{s} is clean and up to date with {s}.", .{ br, up }));
+            const opts: ui.ButtonOptions = .{ .variant = .primary, .width = .fill, .size = 13, .disabled = busy };
+            if (br.len > 0) {
+                if (!ab.upstream and s.has_remote) {
+                    _ = c.leaf(.{ .height = .{ .px = 4 } }, .none, null);
+                    if (ui.button(c, "Publish Branch", withIcon(opts, "square.and.arrow.up")).clicked) ev = .{ .run = .git_push };
+                } else if (ab.upstream and ab.behind > 0 and ab.ahead > 0) {
+                    _ = c.leaf(.{ .height = .{ .px = 4 } }, .none, null);
+                    if (ui.button(c, c.print("Sync ({d}↓ {d}↑)", .{ ab.behind, ab.ahead }), withIcon(opts, "square.and.arrow.down")).clicked) ev = .{ .run = .git_sync };
+                } else if (ab.upstream and ab.behind > 0) {
+                    _ = c.leaf(.{ .height = .{ .px = 4 } }, .none, null);
+                    if (ui.button(c, c.print("Pull {d} Commit{s}", .{ ab.behind, plural(ab.behind) }), withIcon(opts, "square.and.arrow.down")).clicked) ev = .{ .run = .git_pull };
+                } else if (ab.upstream and ab.ahead > 0) {
+                    _ = c.leaf(.{ .height = .{ .px = 4 } }, .none, null);
+                    if (ui.button(c, c.print("Push {d} Commit{s}", .{ ab.ahead, plural(ab.ahead) }), withIcon(opts, "square.and.arrow.up")).clicked) ev = .{ .run = .git_push };
+                }
             }
-            ui.end(c);
+            col.end();
         }
         inline for (.{ Group.merge, Group.staged, Group.changes, Group.untracked }, 0..) |g, gi| {
             const n = s.count(g);
@@ -434,29 +472,45 @@ pub const Scm = struct {
                     .changes => "Changes",
                     .untracked => "Untracked",
                 };
-                const head = ui.div(c).row().wFull().h(24).px(8).gap(6).itemsCenter().hover(t.surface_hover);
+                const head = ui.div(c).row().wFull().h(22).px(8).gap(4).itemsCenter().hover(t.surface_hover);
                 icons.sym(c, if (s.open[gi]) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
-                ui.text(c, title, .{ .size = 11, .weight = .semibold, .color = t.muted });
+                // In the frame's memory: the text is drawn after this returns.
+                const upper = c.print("{s}", .{title});
+                for (@constCast(upper)) |*ch| ch.* = std.ascii.toUpper(ch.*);
+                ui.text(c, upper, .{ .size = 11, .weight = .semibold, .color = t.muted });
                 ui.text(c, c.print("{d}", .{n}), .{ .size = 10, .color = t.muted });
                 ui.spacer(c);
                 var acted = false;
-                if (head.hovered()) {
-                    if (g == .staged) {
-                        if (rowButton(c, "minus")) {
+                if (head.hovered()) switch (g) {
+                    .staged => {
+                        if (rowButtonTip(c, "doc.on.doc", "Open Staged Changes")) {
+                            ev = .open_all;
+                            acted = true;
+                        }
+                        if (rowButtonTip(c, "minus", "Unstage All Changes")) {
                             ev = .unstage_all;
                             acted = true;
                         }
-                    } else {
-                        if (g != .merge and rowButton(c, "arrow.clockwise")) {
+                    },
+                    .merge => if (rowButtonTip(c, "plus", "Stage All Merge Changes")) {
+                        ev = .{ .stage_all = g };
+                        acted = true;
+                    },
+                    else => {
+                        if (rowButtonTip(c, "doc.on.doc", "Open Changes")) {
+                            ev = .open_all;
+                            acted = true;
+                        }
+                        if (rowButtonTip(c, "arrow.clockwise", "Discard All Changes…")) {
                             ev = .{ .discard_all = g };
                             acted = true;
                         }
-                        if (rowButton(c, "plus")) {
+                        if (rowButtonTip(c, "plus", "Stage All Changes")) {
                             ev = .{ .stage_all = g };
                             acted = true;
                         }
-                    }
-                }
+                    },
+                };
                 if (head.clicked() and !acted) s.open[gi] = !s.open[gi];
                 head.end();
                 if (s.open[gi]) {
@@ -518,6 +572,67 @@ pub const Scm = struct {
     /// The list's keys, on the rows as this frame built them: Up and Down
     /// choose the next row (Shift: a range from the anchor), Home and End
     /// the first and the last, Enter opens the chosen change.
+    /// The menu of the view's actions, as the Go app's `scmMenu`, opened by
+    /// the button beside the sidebar's title.
+    pub fn moreMenu(s: *Scm, c: *ui.Context, mi: ui.Interaction, busy: bool) Event {
+        var ev: Event = .none;
+        const m = ui.buttonMenu(c, &s.more_menu, mi) orelse return ev;
+        defer m.end();
+        const staged = s.count(.staged);
+        const others = s.count(.changes) + s.count(.untracked);
+        if (m.item("Commit", .{ .disabled = busy })) ev = .{ .commit = .{ .all = staged == 0, .amend = false, .push = false } };
+        if (m.item("Commit & Push", .{ .disabled = busy })) ev = .{ .commit = .{ .all = staged == 0, .amend = false, .push = true } };
+        if (m.item("Amend Last Commit", .{})) ev = .amend_fill;
+        if (m.item("Undo Last Commit", .{ .disabled = busy })) ev = .undo_commit;
+        m.separator();
+        if (m.item("Open All Changes", .{ .disabled = staged + others == 0 })) ev = .open_all;
+        m.separator();
+        if (m.item("Stage All Changes", .{ .disabled = others + s.count(.merge) == 0 })) ev = .{ .stage_all = .changes };
+        if (m.item("Unstage All Changes", .{ .disabled = staged == 0 })) ev = .unstage_all;
+        if (m.item("Discard All Changes…", .{ .disabled = others == 0 })) ev = .{ .discard_all = .changes };
+        m.separator();
+        if (m.item("Fetch", .{ .disabled = busy })) ev = .{ .run = .git_fetch };
+        if (m.item("Pull", .{ .disabled = busy })) ev = .{ .run = .git_pull };
+        if (m.item("Push", .{ .disabled = busy })) ev = .{ .run = .git_push };
+        if (m.submenu("Pull, Push")) |sub| {
+            defer sub.end();
+            const more = [_]struct { []const u8, @import("commands.zig").Cmd }{
+                .{ "Pull (Rebase)", .git_pull_rebase }, .{ "Pull (Merge)", .git_pull_merge }, .{ "Force Push…", .git_force_push }, .{ "Sync", .git_sync },
+            };
+            for (more) |it| if (sub.item(it[0], .{ .disabled = busy })) {
+                ev = .{ .run = it[1] };
+            };
+        }
+        if (m.submenu("Branch")) |sub| {
+            defer sub.end();
+            const more = [_]struct { []const u8, @import("commands.zig").Cmd }{
+                .{ "Switch Branch…", .git_switch_branch }, .{ "Create Branch…", .git_create_branch }, .{ "Rename Branch…", .git_rename_branch }, .{ "Delete Branch…", .git_delete_branch },
+            };
+            for (more) |it| if (sub.item(it[0], .{})) {
+                ev = .{ .run = it[1] };
+            };
+        }
+        m.separator();
+        if (m.submenu("Stash")) |sub| {
+            defer sub.end();
+            const st = [_]struct { []const u8, @import("commands.zig").Cmd }{
+                .{ "Stash…", .git_stash },                 .{ "Stash (Include Untracked)…", .git_stash_untracked },
+                .{ "Apply Latest Stash", .git_stash_apply_latest }, .{ "Pop Latest Stash", .git_stash_pop },
+                .{ "Apply Stash…", .git_stash_apply },     .{ "Pop Stash…", .git_stash_pop_pick },
+                .{ "View Stash…", .git_stash_view },       .{ "Drop Stash…", .git_stash_drop },
+            };
+            for (st, 0..) |it, k| {
+                if (k == 2 or k == 4) sub.separator();
+                if (sub.item(it[0], .{})) ev = .{ .run = it[1] };
+            }
+        }
+        m.separator();
+        if (m.item("View as Tree", .{ .checked = s.tree })) ev = .{ .run = .scm_tree };
+        if (m.item("Show All Branches", .{ .checked = s.graph.all })) ev = .{ .run = .show_all_branches };
+        if (m.item("Refresh", .{})) ev = .{ .run = .git_refresh };
+        return ev;
+    }
+
     fn listKeys(s: *Scm, c: *ui.Context) ?Event {
         const n = s.order.items.len;
         if (n == 0) return null;
@@ -647,14 +762,14 @@ pub const Scm = struct {
         if (!s.tree) if (std.fs.path.dirnamePosix(ch.path)) |d| ui.text(c, d, .{ .size = 11, .color = t.muted });
         ui.spacer(c);
         if (row.hovered()) {
-            if (rowButton(c, "doc.text")) act = .{ .open_file = ch.path };
+            if (rowButtonTip(c, if (ch.sub) "folder" else "doc.text", if (ch.sub) "Open Folder" else "Open File")) act = .{ .open_file = ch.path };
             switch (g) {
-                .staged => if (rowButton(c, "minus")) {
+                .staged => if (rowButtonTip(c, "minus", "Unstage Changes")) {
                     act = .{ .unstage = s.targets(c, ch.path) };
                 },
                 else => {
-                    if (g != .merge and !ch.sub and rowButton(c, "arrow.clockwise")) act = .{ .discard = s.targets(c, ch.path) };
-                    if (rowButton(c, "plus")) act = .{ .stage = s.targets(c, ch.path) };
+                    if (g != .merge and !ch.sub and rowButtonTip(c, "arrow.clockwise", "Discard Changes…")) act = .{ .discard = s.targets(c, ch.path) };
+                    if (rowButtonTip(c, "plus", "Stage Changes")) act = .{ .stage = s.targets(c, ch.path) };
                 },
             }
         }
@@ -697,13 +812,16 @@ pub const Scm = struct {
                 if (m.item("Unstage Changes", .{})) act = .{ .unstage = s.targets(c, ch.path) };
             } else {
                 if (m.item("Stage Changes", .{})) act = .{ .stage = s.targets(c, ch.path) };
-                if (g != .merge and !ch.sub) if (m.item("Discard Changes", .{})) {
+                if (g != .merge and !ch.sub) if (m.item("Discard Changes…", .{})) {
                     act = .{ .discard = s.targets(c, ch.path) };
                 };
             }
             if (!ch.sub) if (m.item("Stash Changes…", .{})) {
                 act = .{ .stash_files = s.targets(c, ch.path) };
             };
+            m.separator();
+            if (m.item("Reveal in Explorer", .{})) act = .{ .reveal = ch.path };
+            if (m.item("Copy Path", .{})) act = .{ .copy_path = ch.path };
         }
         return act;
     }
@@ -718,4 +836,67 @@ fn rowButton(c: *ui.Context, icon_name: []const u8) bool {
     const clicked = b.clicked();
     b.end();
     return clicked;
+}
+
+/// A row's button with its tooltip.
+fn rowButtonTip(c: *ui.Context, icon_name: []const u8, tip: []const u8) bool {
+    const icon = if (std.mem.eql(u8, icon_name, "arrow.clockwise")) "arrow.uturn.backward" else icon_name;
+    const b = ui.div(c).w(20).h(20).center().rounded(4).hover(c.theme.surface);
+    icons.sym(c, icon, .{ .size = 10, .color = if (b.hovered()) c.theme.text else c.theme.muted });
+    const bi = b.interaction();
+    b.end();
+    ui.tooltip(c, bi, tip);
+    return bi.clicked;
+}
+
+/// A button of the branch's remote, with the count of the commits it
+/// would move beside its icon when there are any.
+fn syncButton(c: *ui.Context, icon: []const u8, tip: []const u8, n: usize, busy: bool) bool {
+    const t = c.theme;
+    const b = ui.div(c).row().h(24).minW(26).px(5).gap(3).center().rounded(5);
+    if (n > 0) _ = b.bg(t.accent.alpha(if (b.hovered()) 0.2 else 0.12)) else _ = b.hover(t.surface_hover);
+    const col = if (n > 0) t.accent else if (b.hovered()) t.text else t.muted;
+    icons.sym(c, icon, .{ .size = 10.5, .color = if (busy) t.muted.alpha(0.5) else col });
+    if (n > 0) ui.text(c, c.print("{d}", .{n}), .{ .size = 11, .weight = .semibold, .color = col });
+    const bi = b.interaction();
+    b.end();
+    ui.tooltip(c, bi, tip);
+    return bi.clicked and !busy;
+}
+
+/// The round mark heading an empty state, as the Go app's.
+fn ring(c: *ui.Context, icon: []const u8, color: ui.Color, ground: ui.Color) void {
+    const r = ui.div(c).w(44).h(44).roundedFull().center().bg(ground);
+    icons.sym(c, icon, .{ .size = 16, .color = color });
+    r.end();
+}
+
+/// A note of an empty state: wrapped to the width it had, each line centered.
+pub fn centered(c: *ui.Context, text: []const u8) void {
+    const box = ui.div(c).column().wFull().itemsCenter().gap(2);
+    defer box.end();
+    const style: ui.TextStyle = .{ .size = 12, .color = c.theme.muted };
+    const width = if (c.rects.get(box.interaction().id)) |r| r.w else 240;
+    var start: usize = 0;
+    var end: usize = 0;
+    var it = std.mem.tokenizeScalar(u8, text, ' ');
+    while (it.next()) |word| {
+        const w_end = @intFromPtr(word.ptr) - @intFromPtr(text.ptr) + word.len;
+        if (end > start and c.text.width(text[start..w_end], style) > width) {
+            ui.text(c, text[start..end], style);
+            start = @intFromPtr(word.ptr) - @intFromPtr(text.ptr);
+        }
+        end = w_end;
+    }
+    if (end > start) ui.text(c, text[start..end], style);
+}
+
+fn withIcon(o: ui.ButtonOptions, icon: []const u8) ui.ButtonOptions {
+    var r = o;
+    r.icon = icon;
+    return r;
+}
+
+fn plural(n: usize) []const u8 {
+    return if (n == 1) "" else "s";
 }

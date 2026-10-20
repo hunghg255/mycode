@@ -340,6 +340,19 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         },
         .unstage_all => _ = quick(wb, &.{ "reset", "-q", "HEAD", "--", "." }),
         .discard_all => wb.ask(.discard_all, "", "Discard all changes?", "Every change not staged is lost, and untracked files go to the Recycle Bin.", &.{ "Cancel", "Discard All" }),
+        .open_all => openChangesTab(wb, null, true),
+        .reveal => |rel| if (top(wb)) |t| {
+            const abs = joinNative(g, t, rel) catch return;
+            defer g.free(abs);
+            wb.sidebar_open = true;
+            wb.side = .explorer;
+            wb.explorer.reveal(abs);
+        },
+        .copy_path => |rel| if (top(wb)) |t| {
+            const abs = joinNative(g, t, rel) catch return;
+            defer g.free(abs);
+            _ = myzig.clipboard.writeText(abs);
+        },
         .press => |rel| {
             const t = top(wb) orelse return;
             const abs = joinNative(g, t, rel) catch return;

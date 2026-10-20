@@ -465,6 +465,16 @@ pub const Workbench = struct {
                 ui.text(c, v.label, .{ .size = 11, .weight = .semibold, .color = t.muted });
             };
             ui.spacer(c);
+            // Source control's actions, in a menu: buttons would leave the title no room.
+            if (wb.side == .scm and wb.scm.top != null) {
+                const more = ui.div(c).w(26).h(24).center().rounded(5).hover(t.surface_hover);
+                icons.sym(c, "ellipsis", .{ .size = 11.5, .color = t.muted });
+                const mi = more.interaction();
+                more.end();
+                ui.tooltip(c, mi, "More Actions");
+                const mev = wb.scm.moreMenu(c, mi, wb.runner.busy);
+                if (mev != .none) wbgit.scmEvent(wb, c, mev);
+            }
         }
         switch (wb.side) {
             .explorer => {

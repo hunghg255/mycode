@@ -87,6 +87,12 @@ needs a `## <version>` section here, or its build fails.
 - In the Zig build, Ctrl+clicking a path in a terminal finds it from where the shell is now, then where it
   started, then the project; goes to its column too (`main.zig:12:5`); takes Git Bash's `/c/...`, WSL's
   `/mnt/c/...`, `~/` and `file://` links; and leaves out the punctuation that ends a sentence.
+- The Zig build's source control is the Go app's: **No Git Repository** and **No Changes** with how the branch
+  stands with its upstream ("main is clean, 2 commits ahead of origin/main.") and a button to **Publish**, **Pull**,
+  **Push** or **Sync**; fetch, pull and push as icons counting the commits they would move; the view's actions
+  under **More Actions** beside its title; "Summary is long" with the summary's length past 50 characters; and
+  tooltips on every button. A change's menu adds **Reveal in Explorer** and **Copy Path**, and a group's buttons
+  open its changes.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.
