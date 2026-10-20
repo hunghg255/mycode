@@ -5,6 +5,12 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- While Ctrl (⌘ on macOS) is held over a terminal, the link or file path under the pointer is underlined, with a hand,
+  so you can see what a click opens.
+- Right-clicking a commit opens one menu, not one for every commit in the list, and its items act on that commit.
+  Lists sharing a menu (the Explorer, tabs, branches, project tabs) had the same flaw: **Rename…** in the Explorer
+  could rename another file.
+
 - Each terminal takes about 4 MB of memory instead of about 50 MB, and each open project about 30 MB less: their
   threads no longer reserve 16 MB stacks, which Windows commits whole. Many projects with several terminals each no
   longer run out of memory.

@@ -299,7 +299,8 @@ bracketed paste, as VS Code's terminal does, so that Claude Code pastes the scre
 in Ghostty and iTerm2: a drag, a double click for a word, a triple click for a line, Shift with a drag in a program
 that takes the mouse, or Select All. `terminalCopyOnSelect` turns it off. Ctrl+click (⌘-click on macOS) opens a link
 in the browser, and a file path, as `src/app.go:12:5`, in the editor at its line and column; a folder of the project
-shows in the Explorer.
+shows in the Explorer. While Ctrl (⌘ on macOS) is held, the link under the pointer is underlined, with a hand, as in
+VS Code.
 
 Terminal profiles choose the shell, as in VS Code. MyCode finds PowerShell 7, Windows PowerShell, Command Prompt, Git
 Bash and WSL on Windows, and the shells of `/etc/shells` on macOS and Linux. The **⌄** button by the panel's **+**

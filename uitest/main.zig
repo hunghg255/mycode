@@ -26,6 +26,8 @@ const Case = struct {
     repos: []const []const u8 = &.{},
     /// Files changed after the commit.
     changes: []const File = &.{},
+    /// More to set up, after the files, repositories and changes.
+    setup: ?*const fn (t: *T) anyerror!void = null,
     settings: []const u8 = "{}",
     runs: []const Run,
     /// What the app left behind, checked after its runs.
@@ -117,6 +119,61 @@ const cases = [_]Case{
             }
         }.f,
     },
+    .{
+        // Every row shares the Explorer's menu: the one right-clicked is renamed.
+        .name = "the Explorer's context menu acts on the row right-clicked",
+        .files = files_ab,
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;rclick:a.txt;click:Rename…;type:renamed;key:enter;frames:3;move:renamed.txt" }},
+        .check = struct {
+            fn f(t: *T) !void {
+                try t.expectFile("alpha/renamed.txt", "first\n");
+                try t.expectFile("alpha/b.txt", "second\n");
+            }
+        }.f,
+    },
+    .{
+        .name = "a commit's context menu shows once and acts on that commit",
+        .files = files_ab,
+        .repos = &.{"alpha"},
+        .setup = struct {
+            fn f(t: *T) !void {
+                try t.write(.{ .path = "alpha/b.txt", .data = "changed\n" });
+                t.gpa.free(try t.git("alpha", &.{ "commit", "-q", "-am", "second" }));
+            }
+        }.f,
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;shortcut:ctrl+shift+g;live:1;rclick:first;click:Create Branch Here…;type:at-first;key:enter;live:2" }},
+        .check = struct {
+            fn f(t: *T) !void {
+                try t.expectGit("alpha", &.{ "rev-parse", "--abbrev-ref", "HEAD" }, "at-first");
+                try t.expectGit("alpha", &.{ "log", "-1", "--format=%s" }, "first");
+            }
+        }.f,
+    },
+    .{
+        .name = "a merge conflict is resolved with Accept Incoming and Accept Current",
+        .files = &.{
+            .{ .path = "alpha/a.txt", .data = "top\nbase one\nm1\nm2\nm3\nm4\nbase two\nend\n" },
+        },
+        .repos = &.{"alpha"},
+        .setup = struct {
+            // Both branches change both lines: two conflicts.
+            fn f(t: *T) !void {
+                t.gpa.free(try t.git("alpha", &.{ "checkout", "-q", "-b", "other" }));
+                try t.write(.{ .path = "alpha/a.txt", .data = "top\ntheirs one\nm1\nm2\nm3\nm4\ntheirs two\nend\n" });
+                t.gpa.free(try t.git("alpha", &.{ "commit", "-q", "-am", "theirs" }));
+                t.gpa.free(try t.git("alpha", &.{ "checkout", "-q", "main" }));
+                try t.write(.{ .path = "alpha/a.txt", .data = "top\nours one\nm1\nm2\nm3\nm4\nours two\nend\n" });
+                t.gpa.free(try t.git("alpha", &.{ "commit", "-q", "-am", "ours" }));
+                try t.gitMayFail("alpha", &.{ "merge", "-q", "other" });
+            }
+        }.f,
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;live:1;shortcut:ctrl+p;type:a.txt;key:enter;live:1;move:Accept Current;click:Accept Incoming;frames:3;click:Accept Current;frames:3;shortcut:ctrl+s;frames:3" }},
+        .check = struct {
+            fn f(t: *T) !void {
+                try t.expectFile("alpha/a.txt", "top\ntheirs one\nm1\nm2\nm3\nm4\nours two\nend\n");
+            }
+        }.f,
+    },
 };
 
 const palette = "shortcut:ctrl+shift+p;type:";
@@ -166,16 +223,25 @@ const T = struct {
     }
 
     fn git(t: *T, rel: []const u8, args: []const []const u8) ![]u8 {
+        return t.gitRun(rel, args, false);
+    }
+
+    /// Git, whose failing is expected (a merge that conflicts).
+    fn gitMayFail(t: *T, rel: []const u8, args: []const []const u8) !void {
+        if (t.gitRun(rel, args, true)) |out| t.gpa.free(out) else |err| if (err != error.GitFailed) return err;
+    }
+
+    fn gitRun(t: *T, rel: []const u8, args: []const []const u8, quiet: bool) ![]u8 {
         const cwd = try t.path(rel);
         defer t.gpa.free(cwd);
         var argv: std.ArrayList([]const u8) = .empty;
         defer argv.deinit(t.gpa);
-        try argv.appendSlice(t.gpa, &.{ "git", "-c", "user.name=uitest", "-c", "user.email=uitest@example.com", "-c", "commit.gpgsign=false" });
+        try argv.appendSlice(t.gpa, &.{ "git", "-c", "user.name=uitest", "-c", "user.email=uitest@example.com", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false" });
         try argv.appendSlice(t.gpa, args);
         const r = try std.process.run(t.gpa, t.io, .{ .argv = argv.items, .cwd = .{ .path = cwd } });
         defer t.gpa.free(r.stderr);
         if (!r.term.success()) {
-            std.debug.print("    git {s}: {s}\n", .{ args[0], r.stderr });
+            if (!quiet) std.debug.print("    git {s}: {s}\n", .{ args[0], r.stderr });
             t.gpa.free(r.stdout);
             return error.GitFailed;
         }
@@ -233,6 +299,7 @@ fn runCase(t: *T, case: Case, exe: []const u8) !void {
         t.gpa.free(try t.git(r, &.{ "commit", "-q", "-m", "first" }));
     }
     for (case.changes) |f| try t.write(f);
+    if (case.setup) |setup| try setup(t);
     try t.write(.{ .path = "data/settings.json", .data = case.settings });
 
     var env = try t.env.clone(t.gpa);
