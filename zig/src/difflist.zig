@@ -512,12 +512,19 @@ pub const DiffList = struct {
                 },
                 .comment => |cm| if (review) |rv| if (cm.index < rv.list.items.len) {
                     const k = rv.list.items[cm.index];
-                    ui.row(c, .{ .grow = 1, .height = .fill, .padding = .xy(12, 0), .gap = 8, .align_items = .center, .background = t.warning.alpha(0.12) });
-                    ui.text(c, "●", .{ .size = 11, .color = t.warning });
+                    // A card, as the Go app's: a stripe of its color, its head, its text's first line.
+                    ui.row(c, .{ .grow = 1, .height = .fill, .padding = .{ .top = 0, .right = 8, .bottom = 0, .left = 0 }, .gap = 10, .align_items = .center, .background = t.surface });
+                    _ = c.leaf(.{ .width = .{ .px = 3 }, .height = .fill, .background = if (k.outdated) t.warning else t.accent }, .none, null);
+                    const head = ui.div(c).w(0).grow();
+                    switch (@import("review.zig").cardHead(c, k)) {
+                        .edit => ev = .{ .edit_comment = cm.index },
+                        .delete => ev = .{ .delete_comment = cm.index },
+                        .none => {},
+                    }
+                    head.end();
+                    const words = ui.div(c).w(0).grow().clip();
                     ui.text(c, std.mem.sliceTo(k.text, '\n'), .{ .size = 12 });
-                    ui.spacer(c);
-                    if (tool(c, "Edit")) ev = .{ .edit_comment = cm.index };
-                    if (tool(c, "Delete")) ev = .{ .delete_comment = cm.index };
+                    words.end();
                     ui.end(c);
                 },
             }

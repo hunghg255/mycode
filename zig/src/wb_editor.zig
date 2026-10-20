@@ -460,23 +460,33 @@ fn reviewStrip(wb: *Workbench, c: *ui.Context, d: *Doc, rel: []const u8) void {
         any = true;
     };
     if (!any) return;
-    ui.column(c, .{ .width = .fill, .padding = .xy(12, 6), .gap = 4, .background = t.warning.alpha(0.08) });
+    ui.column(c, .{ .width = .fill, .padding = .xy(10, 6), .gap = 6 });
     defer ui.end(c);
     var remove: ?usize = null;
     for (wb.review.list.items, 0..) |cm, i| if (std.mem.eql(u8, cm.path, rel)) {
         c.keyed(cm.text.ptr);
-        const row = ui.div(c).row().wFull().gap(8).itemsCenter();
-        ui.text(c, c.print("{d}{s}", .{ cm.first + 1, if (cm.outdated) " (outdated)" else "" }), .{ .size = 11, .mono = true, .color = t.muted });
-        const b = ui.div(c).row().grow().rounded(3).hover(t.surface_hover);
-        ui.text(c, cm.text, .{ .size = 12, .wrap = true });
-        if (b.clicked()) {
-            d.editor.goToLine(cm.first + 1);
-            d.editor.area.select(d.editor.area.doc.lineStart(cm.first), d.editor.area.lineRange(@min(cm.last, d.editor.area.doc.lineCount() - 1))[1]);
-            wbfiles.askComment(wb, d);
+        // A card, as the Go app's: a stripe of its color, its head, its text.
+        const card = ui.div(c).row().wFull().itemsStretch().rounded(6).bg(t.surface).border(t.border).clip();
+        _ = c.leaf(.{ .width = .{ .px = 3 }, .background = if (cm.outdated) t.warning else t.accent }, .none, null);
+        const inner = ui.div(c).column().grow().pl(9).pr(8).py(4).gap(2);
+        const edit = struct {
+            fn f(w: *Workbench, dd: *Doc, k: @import("review.zig").Comment) void {
+                dd.editor.goToLine(k.first + 1);
+                dd.editor.area.select(dd.editor.area.doc.lineStart(k.first), dd.editor.area.lineRange(@min(k.last, dd.editor.area.doc.lineCount() - 1))[1]);
+                wbfiles.askComment(w, dd);
+            }
+        }.f;
+        switch (@import("review.zig").cardHead(c, cm)) {
+            .edit => edit(wb, d, cm),
+            .delete => remove = i,
+            .none => {},
         }
+        const b = ui.div(c).wFull().rounded(3).hover(t.surface_hover);
+        ui.text(c, cm.text, .{ .size = 12.5, .mono = true, .wrap = true });
+        if (b.clicked()) edit(wb, d, cm);
         b.end();
-        if (ui.button(c, "Delete", .{ .variant = .ghost, .size = 11 }).clicked) remove = i;
-        row.end();
+        inner.end();
+        card.end();
     };
     if (remove) |i| wb.review.remove(i);
 }
@@ -634,7 +644,8 @@ pub fn reviewStatus(wb: *Workbench, c: *ui.Context) void {
     if (wb.review.list.items.len > 0) {
         const rv = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
         icons.sym(c, "pencil", .{ .size = 11, .color = .hex(p.modified) });
-        ui.text(c, c.print("{d} comments", .{wb.review.list.items.len}), .{ .size = 12, .color = t.muted });
+        const nc = wb.review.list.items.len;
+        ui.text(c, c.print("{d} comment{s}", .{ nc, if (nc == 1) "" else "s" }), .{ .size = 12, .color = t.muted });
         const ri = rv.interaction();
         rv.end();
         if (ui.buttonMenu(c, &wb.review_menu, ri)) |m| {

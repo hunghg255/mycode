@@ -2,6 +2,7 @@
 //! or pasted into the terminal in one go for an agent to read. A comment
 //! follows its lines as the file changes, and says when they are gone.
 const std = @import("std");
+const myzig = @import("myzig");
 
 pub const Comment = struct {
     /// Relative to the folder, with slashes.
@@ -125,4 +126,40 @@ test "comments follow their lines" {
     const f = try r.format(gpa);
     defer gpa.free(f);
     try std.testing.expect(std.mem.startsWith(u8, f, "a.go:4 (outdated)\n```go\nb\n```\nwhy b?\n"));
+}
+
+/// The head of a comment's card, as the Go app's: a stripe of its color down
+/// the left (put by the caller), its icon, "Comment on lines 3–5", an
+/// Outdated pill, and buttons to edit and delete it.
+pub const CardAction = enum { none, edit, delete };
+
+pub fn cardHead(c: *myzig.ui.Context, cm: Comment) CardAction {
+    const ui = myzig.ui;
+    const icons = @import("icons.zig");
+    const t = c.theme;
+    var act: CardAction = .none;
+    const color = if (cm.outdated) t.warning else t.accent;
+    const row = ui.div(c).row().wFull().h(22).gap(6).itemsCenter();
+    defer row.end();
+    icons.sym(c, "text.bubble", .{ .size = 10, .color = color });
+    ui.text(c, "Comment", .{ .size = 11.5, .weight = .semibold });
+    const where = if (cm.first == cm.last) c.print("on line {d}", .{cm.first + 1}) else c.print("on lines {d}–{d}", .{ cm.first + 1, cm.last + 1 });
+    ui.text(c, where, .{ .size = 11.5, .color = t.muted });
+    if (cm.outdated) {
+        const pill = ui.div(c).h(16).px(6).center().roundedFull().bg(t.warning.alpha(0.14));
+        ui.text(c, "Outdated", .{ .size = 10.5, .weight = .semibold, .color = t.warning });
+        const pi = pill.interaction();
+        pill.end();
+        ui.tooltip(c, pi, "The lines have changed since");
+    }
+    ui.spacer(c);
+    inline for (.{ .{ "pencil", "Edit Comment", CardAction.edit }, .{ "trash", "Delete Comment", CardAction.delete } }) |b| {
+        const btn = ui.div(c).w(22).h(20).center().rounded(4).hover(t.surface_hover);
+        icons.sym(c, b[0], .{ .size = 10, .color = if (btn.hovered()) t.text else t.muted });
+        const bi = btn.interaction();
+        btn.end();
+        ui.tooltip(c, bi, b[1]);
+        if (bi.clicked) act = b[2];
+    }
+    return act;
 }
