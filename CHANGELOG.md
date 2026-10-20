@@ -133,6 +133,9 @@ needs a `## <version>` section here, or its build fails.
   between a Markdown or SVG file's preview and its source has an icon and its key in its tooltip.
 - Uninstalling the Zig build takes away the `mycode` command and File Explorer's **Open with MyCode** (the Go app's
   too, which have the same names), and offers to delete MyCode's settings.
+- The installed Zig build sets up the `mycode` command and File Explorer's **Open with MyCode** as it starts, as the
+  Go app does, unless they were uninstalled; the button between a Markdown or SVG file's preview and its source
+  sits at the end of the tab strip.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

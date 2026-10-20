@@ -91,6 +91,28 @@ pub fn ensure(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Enviro
     return true;
 }
 
+/// As an installed MyCode starts, as the Go app's does: sets up the command
+/// and the menus off the main thread, unless the user took them away. A
+/// development build (in zig-out) leaves them alone.
+pub fn atStart(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, data_dir: []const u8) void {
+    if (!supported) return;
+    const exe = std.process.executablePathAlloc(io, gpa) catch return;
+    if (std.mem.indexOf(u8, exe, "zig-out") != null or optedOut(gpa, io, data_dir)) {
+        gpa.free(exe);
+        return;
+    }
+    const t = std.Thread.spawn(.{}, struct {
+        fn run(g: std.mem.Allocator, i: std.Io, e: *const std.process.Environ.Map, d: []const u8, x: [:0]u8) void {
+            defer g.free(x);
+            _ = ensure(g, i, e, d, x, false);
+        }
+    }.run, .{ gpa, io, env, data_dir, exe }) catch {
+        gpa.free(exe);
+        return;
+    };
+    t.detach();
+}
+
 /// Takes the command and the menus away, for good.
 pub fn uninstall(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, data_dir: []const u8) void {
     if (!supported) return;

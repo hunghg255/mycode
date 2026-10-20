@@ -614,8 +614,25 @@ pub const Editors = struct {
             }
         }
         tabs.end();
-        // The column's lock and splitting it.
+        // A Markdown or SVG file's preview, the column's lock and splitting it.
         const tools = ui.div(c).row().pl(4).pr(6).gap(2).itemsCenter();
+        if (col.current()) |cur| switch (cur.body) {
+            .file => |d| if (@import("viewer.zig").isMarkdown(d.path) or @import("viewer.zig").isSvg(d.path)) {
+                const b = ui.div(c).row().h(24).px(7).gap(5).itemsCenter().rounded(4).hover(t.surface_hover);
+                icons.sym(c, if (d.rendered) "chevron.left.forwardslash.chevron.right" else "photo", .{ .size = 10.5, .color = if (b.hovered()) t.text else t.muted });
+                ui.text(c, if (d.rendered) "Source" else "Preview", .{ .size = 11.5, .color = if (b.hovered()) t.text else t.muted });
+                const bi = b.interaction();
+                b.end();
+                ui.tooltip(c, bi, if (d.rendered) "Show Source (Ctrl+Shift+V)" else "Show Preview (Ctrl+Shift+V)");
+                if (bi.clicked) {
+                    d.rendered = !d.rendered;
+                    // A file in two columns: this tab's alone.
+                    if (cur.rendered != null) cur.rendered = d.rendered;
+                    c.changed = true;
+                }
+            },
+            else => {},
+        };
         if (col.locked) if (toolButton(c, "lock", "Unlock Column")) {
             col.locked = false;
             c.changed = true;

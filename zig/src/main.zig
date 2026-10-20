@@ -382,6 +382,7 @@ pub fn main(init: std.process.Init) !void {
         m.updates.deinit();
     }
     @import("crashlog.zig").start(gpa, io, m.store.dir);
+    @import("winshell.zig").atStart(gpa, io, init.environ_map, m.store.dir);
     m.state = .load(gpa, io, m.store.state_path);
     m.profiles = termprofiles.find(m.profiles_arena.allocator(), io, init.environ_map, m.store.s.terminalProfiles);
     m.loadKeys();
