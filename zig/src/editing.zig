@@ -62,6 +62,15 @@ pub fn moveLines(ta: *ui.TextArea, gpa: std.mem.Allocator, up: bool) void {
     }
 }
 
+/// Selects the lines of the selection, with their newlines; again, the
+/// next line too (Ctrl+L).
+pub fn selectLines(ta: *ui.TextArea) void {
+    const sp = span(ta);
+    var b = sp.b;
+    if (ta.sel.lo() == sp.a and ta.sel.hi() == sp.b and sp.last + 1 < ta.doc.lineCount()) b = ta.lineRange(sp.last + 1)[1];
+    ta.select(sp.a, b);
+}
+
 pub fn copyLines(ta: *ui.TextArea, gpa: std.mem.Allocator, up: bool) void {
     const sp = span(ta);
     const block = withNewline(gpa, ta.doc.slice(gpa, sp.a, sp.b));
@@ -215,4 +224,15 @@ test transform {
         defer gpa.free(o);
         try std.testing.expectEqualStrings(cs[2], o);
     }
+}
+
+test selectLines {
+    var ta: ui.TextArea = .init(std.testing.allocator, "one\ntwo\nthree");
+    defer ta.deinit();
+    ta.collapse(1);
+    selectLines(&ta);
+    try std.testing.expectEqual(@as(usize, 0), ta.sel.lo());
+    try std.testing.expectEqual(@as(usize, 4), ta.sel.hi());
+    selectLines(&ta);
+    try std.testing.expectEqual(@as(usize, 8), ta.sel.hi());
 }

@@ -28,9 +28,14 @@ pub fn keys(wb: *Workbench, c: *ui.Context) void {
     const doc = wb.editors.currentDoc();
     const cur_id = if (wb.editors.current()) |it| it.area_id else 0;
     const editor_focus = doc != null and cur_id != 0 and c.focus == cur_id;
+    const term_focus = terminalFocused(wb);
+    // A terminal with the keyboard is offered keys before the menu bar
+    // (off macOS): its shell keeps Ctrl+L, Ctrl+W, Ctrl+R.
+    c.keys_first = term_focus and !ui.keys.mac;
     const cx: keymap.Context = .{
         .editor_focus = editor_focus,
-        .input_focus = c.focused_text != null and !editor_focus,
+        .terminal_focus = term_focus,
+        .input_focus = c.focused_text != null and !editor_focus and !term_focus,
         .explorer_focus = wb.explorer.focused,
         .sidebar_visible = wb.sidebar_open,
         .terminal_open = wb.panel.open,
@@ -50,6 +55,7 @@ pub fn keys(wb: *Workbench, c: *ui.Context) void {
         return;
     }
     const S = ui.Shortcut;
+    if (term_focus) return shellSkip(wb, c);
     // Recent folders and the column and tab numbers, anywhere but a field.
     if (!cx.input_focus) {
         if (c.shortcut(.{ .key = 'r', .ctrl = true })) return run_mod.run(wb, c, .open_recent);
@@ -93,6 +99,45 @@ pub fn keys(wb: *Workbench, c: *ui.Context) void {
         .{ .{ .key = 'o', .cmd = true, .shift = true }, .go_to_symbol },
     };
     for (table) |e| if (c.shortcut(e[0])) return run_mod.run(wb, c, e[1]);
+}
+
+/// A terminal of the panel or of a tab has the keyboard.
+fn terminalFocused(wb: *Workbench) bool {
+    for (wb.panel.terms.items) |t| if (t.focused()) return true;
+    for (wb.editors.cols.items) |col| for (col.items.items) |it| switch (it.body) {
+        .terminal => |t| if (t.focused()) return true,
+        else => {},
+    };
+    return false;
+}
+
+/// The commands a terminal leaves its keys to, off macOS: the workbench's
+/// own (quick open, the palette, tabs, the panel, the sidebar, zoom), any
+/// with Ctrl and Shift but Copy and Paste's, any with a function key, and
+/// Alt with a digit (a tab). The shell keeps the rest.
+fn shellSkip(wb: *Workbench, c: *ui.Context) void {
+    if (ui.keys.mac) return;
+    const sc = c.input.shortcut orelse return;
+    if (sc.alt and !sc.ctrl and !sc.cmd and sc.key >= '1' and sc.key <= '9') {
+        const col = wb.editors.focusCol();
+        _ = c.shortcut(sc);
+        if (col.items.items.len > 0) wb.editors.show(.{ .col = wb.editors.focus, .idx = @min(sc.key - '1', col.items.items.len - 1) });
+        c.changed = true;
+        return;
+    }
+    const skips = [_]Cmd{ .quick_open, .command_palette, .next_tab, .prev_tab, .toggle_terminal, .new_terminal, .toggle_sidebar, .zoom_in, .zoom_out, .zoom_reset };
+    const ctrl = sc.ctrl or sc.cmd;
+    const ctrl_shift = ctrl and sc.shift and sc.key != 'c' and sc.key != 'v';
+    const fkey = sc.key >= ui.Shortcut.f1 and sc.key < ui.Shortcut.f1 + 12;
+    for (commands.all) |cmd| {
+        const accel = commands.info(cmd).accel;
+        if (accel.len == 0 or wb.shell.keymap.takesAccel(accel, cmd)) continue;
+        const k = keymap.parseKey(accel) orelse continue;
+        if (!keymap.sameKey(k, .{ .key = sc.key, .ctrl = sc.ctrl, .cmd = sc.cmd, .alt = sc.alt, .shift = sc.shift })) continue;
+        if (std.mem.indexOfScalar(Cmd, &skips, cmd) == null and !ctrl_shift and !fkey) return;
+        _ = c.shortcut(sc);
+        return run_mod.run(wb, c, cmd);
+    }
 }
 
 /// The columns side by side, splits nested: each column's width is its own,

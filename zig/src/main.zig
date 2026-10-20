@@ -6,6 +6,7 @@ const myzig = @import("myzig");
 const fs = @import("fs.zig");
 const git = @import("git.zig");
 const commands = @import("commands.zig");
+const menubar = @import("menubar.zig");
 const settings = @import("settings.zig");
 const state_mod = @import("state.zig");
 const keymap = @import("keymap.zig");
@@ -32,6 +33,10 @@ pub const Main = struct {
     menu_arena: std.heap.ArenaAllocator,
     menu_recent_len: usize = 0,
     menu_recent_first: u64 = 0,
+    /// The settings, keys and review comments the menu bar was made of.
+    menu_settings: u64 = 0,
+    menu_keys: i96 = -1,
+    menu_reviewing: bool = false,
     /// Set as main returns: windows closing then find their state gone.
     ending: bool = false,
 
@@ -54,19 +59,67 @@ pub const Main = struct {
         // The labels outlive this build: the old menu goes first.
         var next: std.heap.ArenaAllocator = .init(m.gpa);
         errdefer next.deinit();
-        const bar = try commands.menuBar(Main, m, next.allocator(), recent.items);
+        var names: std.ArrayList([]const u8) = .empty;
+        defer names.deinit(m.gpa);
+        for (m.profiles) |p| try names.append(m.gpa, p.name);
+        const sh = m.focused orelse (if (m.shells.items.len > 0) m.shells.items[0] else null);
+        const bar = try menubar.build(Main, m, next.allocator(), .{
+            .recent = recent.items,
+            .profiles = names.items,
+            .default_profile = if (sh) |s| s.defaultProfile() else 0,
+            .settings = &m.store.s,
+            .reviewing = m.reviewing(),
+            .accel = menuAccel,
+            .ctx = m,
+        });
         try m.app.setMenu(bar);
         m.menu_arena.deinit();
         m.menu_arena = next;
         m.menu_recent_len = m.state.f.recent.len;
         m.menu_recent_first = if (m.state.f.recent.len > 0) std.hash.Wyhash.hash(0, m.state.f.recent[0]) else 0;
+        m.menu_settings = m.store.version;
+        m.menu_keys = m.keys_mtime;
+        m.menu_reviewing = m.reviewing();
     }
 
-    /// Builds the menu again when the recent folders changed.
+    /// Review comments wait in the project shown.
+    fn reviewing(m: *Main) bool {
+        const sh = m.focused orelse return false;
+        const wb = sh.active() orelse return false;
+        return wb.review.list.items.len > 0;
+    }
+
+    /// A command's accelerator in the menu bar: none when keybindings.json
+    /// binds its keys, which the menu would take first, or takes them away
+    /// from it.
+    fn menuAccel(ctx: *anyopaque, cmd: commands.Cmd) []const u8 {
+        const m: *Main = @ptrCast(@alignCast(ctx));
+        const accel = commands.info(cmd).accel;
+        if (accel.len == 0) return "";
+        if (m.keymap.takesAccel(accel, cmd)) return "";
+        return accel;
+    }
+
+    /// Builds the menu again when what it shows changed: the recent
+    /// folders, the settings, the keys, whether review comments wait.
     pub fn menuIfChanged(m: *Main) void {
         const first = if (m.state.f.recent.len > 0) std.hash.Wyhash.hash(0, m.state.f.recent[0]) else 0;
-        if (m.state.f.recent.len == m.menu_recent_len and first == m.menu_recent_first) return;
+        if (m.state.f.recent.len == m.menu_recent_len and first == m.menu_recent_first and
+            m.store.version == m.menu_settings and m.keys_mtime == m.menu_keys and m.reviewing() == m.menu_reviewing) return;
         m.buildMenu() catch {};
+    }
+
+    /// File → New Terminal with Profile, and Default Terminal Profile.
+    pub fn profileHandler(comptime k: usize, comptime new: bool) fn (*Main, *myzig.menu.Item) void {
+        return struct {
+            fn f(m: *Main, _: *myzig.menu.Item) void {
+                const sh = m.focused orelse return;
+                if (!new) return sh.setDefaultProfile(k);
+                const wb = sh.active() orelse return;
+                @import("wb_files.zig").newTerminal(wb, k);
+                if (sh.window) |w| w.redraw();
+            }
+        }.f;
     }
 
     pub fn recentHandler(comptime k: usize) fn (*Main, *myzig.menu.Item) void {
@@ -362,4 +415,7 @@ test {
     _ = @import("doc.zig");
     _ = @import("viewer.zig");
     _ = @import("updates.zig");
+    _ = commands;
+    _ = menubar;
+    _ = @import("panel.zig");
 }

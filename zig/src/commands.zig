@@ -4,7 +4,9 @@
 //! the window sees the key; `key` is a key the window takes itself (the
 //! editor's, which text fields and terminals keep for themselves).
 const std = @import("std");
-const myzig = @import("myzig");
+const builtin = @import("builtin");
+
+const mac = builtin.os.tag == .macos;
 
 pub const Cmd = enum {
     // File
@@ -13,6 +15,7 @@ pub const Cmd = enum {
     open_folder,
     open_folder_new_window,
     open_recent,
+    clear_recent,
     save,
     save_as,
     save_all,
@@ -20,6 +23,7 @@ pub const Cmd = enum {
     close_tab,
     close_all_tabs,
     reopen_tab,
+    close_folder,
     close_project,
     open_settings,
     open_keybindings,
@@ -27,11 +31,19 @@ pub const Cmd = enum {
     uninstall_command,
     quit,
     // Edit
+    undo,
+    redo,
     find,
     replace,
+    find_next,
+    find_prev,
     find_in_files,
     replace_in_files,
     // Selection
+    select_line,
+    toggle_comment,
+    indent_lines,
+    outdent_lines,
     move_line_up,
     move_line_down,
     copy_line_up,
@@ -54,11 +66,18 @@ pub const Cmd = enum {
     show_scm,
     toggle_terminal,
     new_terminal,
+    terminal_tab,
+    terminal_move,
+    kill_terminal,
     maximize_panel,
+    toggle_word_wrap,
     toggle_wrap,
     toggle_minimap,
     toggle_preview,
     split_right,
+    prev_column,
+    move_tab_next,
+    move_tab_prev,
     toggle_column_lock,
     move_terminal_to_column,
     zoom_in,
@@ -80,6 +99,7 @@ pub const Cmd = enum {
     quick_open,
     go_to_line,
     go_to_symbol,
+    go_to_bracket,
     next_tab,
     prev_tab,
     next_column,
@@ -91,6 +111,7 @@ pub const Cmd = enum {
     prev_terminal,
     // Git
     git_commit,
+    git_commit_push,
     git_commit_amend,
     git_undo_commit,
     git_push,
@@ -112,9 +133,16 @@ pub const Cmd = enum {
     git_stash_pop_pick,
     git_stash_view,
     git_stash_drop,
+    git_continue,
+    git_abort,
     open_changes,
+    open_all_changes,
+    show_change,
     stage_change,
     revert_change,
+    stage_file,
+    unstage_file,
+    stage_all,
     toggle_blame,
     accept_current,
     accept_incoming,
@@ -151,205 +179,191 @@ pub const Info = struct {
     accel: []const u8 = "",
     /// A key the window takes, with the Mac's symbols (`ui.keys.label`).
     key: []const u8 = "",
-    /// The menu the command is in; the palette alone when empty.
+    /// The menu the command is in, for the palette; none when empty.
     menu: []const u8 = "",
+    /// The Go app's id for it, which keybindings.json may name.
+    id: []const u8 = "",
 };
 
 pub fn info(cmd: Cmd) Info {
     return switch (cmd) {
-        .new_file => .{ .title = "New File", .accel = "CmdOrCtrl+N", .menu = "File" },
+        .new_file => .{ .title = "New File", .accel = "CmdOrCtrl+N", .menu = "File", .id = "file.new" },
         .open_file => .{ .title = "Open File…", .menu = "File" },
-        .open_folder => .{ .title = "Open Folder…", .accel = "CmdOrCtrl+O", .menu = "File" },
-        .open_folder_new_window => .{ .title = "Open Folder in New Window…", .accel = "CmdOrCtrl+Alt+O", .menu = "File" },
-        .open_recent => .{ .title = "Open Recent…", .key = "⌃R", .menu = "File" },
-        .save => .{ .title = "Save", .accel = "CmdOrCtrl+S", .menu = "File" },
-        .save_as => .{ .title = "Save As…", .accel = "CmdOrCtrl+Shift+S", .menu = "File" },
-        .save_all => .{ .title = "Save All", .accel = "CmdOrCtrl+Alt+S", .menu = "File" },
-        .toggle_auto_save => .{ .title = "Auto Save", .menu = "File" },
-        .close_tab => .{ .title = "Close Tab", .accel = "CmdOrCtrl+W", .menu = "File" },
+        .open_folder => .{ .title = "Open Folder…", .accel = "CmdOrCtrl+O", .menu = "File", .id = "file.openFolder" },
+        .open_folder_new_window => .{ .title = "Open Folder in New Window…", .accel = if (mac) "CmdOrCtrl+Alt+O" else "", .menu = "File", .id = "file.openFolderWindow" },
+        .open_recent => .{ .title = "Open Recent…", .key = "⌃R", .menu = "File", .id = "file.openRecent" },
+        .clear_recent => .{ .title = "Clear Recently Opened", .menu = "File", .id = "file.clearRecent" },
+        .save => .{ .title = "Save", .accel = "CmdOrCtrl+S", .menu = "File", .id = "file.save" },
+        .save_as => .{ .title = "Save As…", .accel = "CmdOrCtrl+Shift+S", .menu = "File", .id = "file.saveAs" },
+        .save_all => .{ .title = "Save All", .accel = if (mac) "CmdOrCtrl+Alt+S" else "", .menu = "File", .id = "file.saveAll" },
+        .toggle_auto_save => .{ .title = "Auto Save", .menu = "File", .id = "file.autoSave" },
+        .close_tab => .{ .title = "Close Tab", .accel = "CmdOrCtrl+W", .menu = "File", .id = "file.close" },
         .close_all_tabs => .{ .title = "Close All Tabs", .menu = "File" },
-        .reopen_tab => .{ .title = "Reopen Closed Tab", .accel = "CmdOrCtrl+Shift+T", .menu = "File" },
-        .close_project => .{ .title = "Close Project", .menu = "File" },
-        .open_settings => .{ .title = "Open Settings", .accel = "CmdOrCtrl+,", .menu = "File" },
-        .open_keybindings => .{ .title = "Open Keyboard Shortcuts", .menu = "File" },
-        .install_command => .{ .title = "Install 'mycode' Command and Explorer Menu", .menu = "File" },
-        .uninstall_command => .{ .title = "Uninstall 'mycode' Command and Explorer Menu", .menu = "File" },
+        .reopen_tab => .{ .title = "Reopen Closed Tab", .accel = "CmdOrCtrl+Shift+T", .menu = "File", .id = "file.reopenClosed" },
+        .close_folder => .{ .title = "Close Folder", .menu = "File", .id = "file.closeFolder" },
+        .close_project => .{ .title = "Close Project", .menu = "File", .id = "file.closeProject" },
+        .open_settings => .{ .title = "Open Settings", .accel = "CmdOrCtrl+,", .menu = "File", .id = "file.settings" },
+        .open_keybindings => .{ .title = "Open Keyboard Shortcuts", .menu = "File", .id = "file.keybindings" },
+        .install_command => .{ .title = "Install 'mycode' Command and Explorer Menu", .menu = "File", .id = "file.installCLI" },
+        .uninstall_command => .{ .title = "Uninstall 'mycode' Command and Explorer Menu", .menu = "File", .id = "file.uninstallCLI" },
         .quit => .{ .title = "Exit", .menu = "File" },
-        .find => .{ .title = "Find", .key = "⌘F", .menu = "Edit" },
-        .replace => .{ .title = "Replace", .key = "⌥⌘F", .menu = "Edit" },
-        .find_in_files => .{ .title = "Find in Files", .accel = "CmdOrCtrl+Shift+F", .menu = "Edit" },
-        .replace_in_files => .{ .title = "Replace in Files", .accel = "CmdOrCtrl+Shift+H", .menu = "Edit" },
-        .move_line_up => .{ .title = "Move Line Up", .key = "⌥↑", .menu = "Selection" },
-        .move_line_down => .{ .title = "Move Line Down", .key = "⌥↓", .menu = "Selection" },
-        .copy_line_up => .{ .title = "Copy Line Up", .key = "⇧⌥↑", .menu = "Selection" },
-        .copy_line_down => .{ .title = "Copy Line Down", .key = "⇧⌥↓", .menu = "Selection" },
-        .delete_line => .{ .title = "Delete Line", .key = "⇧⌘K", .menu = "Selection" },
-        .insert_line_below => .{ .title = "Insert Line Below", .key = "⌘↵", .menu = "Selection" },
-        .insert_line_above => .{ .title = "Insert Line Above", .key = "⇧⌘↵", .menu = "Selection" },
-        .sort_lines_asc => .{ .title = "Sort Lines Ascending", .menu = "Selection" },
-        .sort_lines_desc => .{ .title = "Sort Lines Descending", .menu = "Selection" },
+        // Undo and Redo take no keys in the menu: Ctrl+Z goes to the focused
+        // control, the editor's history or a text field's.
+        .undo => .{ .title = "Undo", .menu = "Edit", .id = "edit.undo" },
+        .redo => .{ .title = "Redo", .menu = "Edit", .id = "edit.redo" },
+        .find => .{ .title = "Find", .accel = "CmdOrCtrl+F", .menu = "Edit", .id = "edit.find" },
+        .replace => .{ .title = "Replace", .accel = if (mac) "CmdOrCtrl+Alt+F" else "Ctrl+H", .menu = "Edit", .id = "edit.replace" },
+        .find_next => .{ .title = "Find Next", .accel = if (mac) "CmdOrCtrl+G" else "F3", .menu = "Edit", .id = "edit.findNext" },
+        .find_prev => .{ .title = "Find Previous", .accel = if (mac) "CmdOrCtrl+Shift+G" else "Shift+F3", .menu = "Edit", .id = "edit.findPrev" },
+        .find_in_files => .{ .title = "Find in Files", .accel = "CmdOrCtrl+Shift+F", .menu = "Edit", .id = "edit.findInFiles" },
+        .replace_in_files => .{ .title = "Replace in Files", .accel = "CmdOrCtrl+Shift+H", .menu = "Edit", .id = "edit.replaceInFiles" },
+        .select_line => .{ .title = "Select Line", .accel = "CmdOrCtrl+L", .menu = "Selection", .id = "sel.line" },
+        .toggle_comment => .{ .title = "Toggle Line Comment", .accel = "CmdOrCtrl+/", .menu = "Selection", .id = "sel.comment" },
+        .indent_lines => .{ .title = "Indent Lines", .accel = "CmdOrCtrl+]", .menu = "Selection", .id = "sel.indent" },
+        .outdent_lines => .{ .title = "Outdent Lines", .accel = "CmdOrCtrl+[", .menu = "Selection", .id = "sel.outdent" },
+        .move_line_up => .{ .title = "Move Line Up", .key = "⌥↑", .menu = "Selection", .id = "sel.moveUp" },
+        .move_line_down => .{ .title = "Move Line Down", .key = "⌥↓", .menu = "Selection", .id = "sel.moveDown" },
+        .copy_line_up => .{ .title = "Copy Line Up", .key = "⇧⌥↑", .menu = "Selection", .id = "sel.copyUp" },
+        .copy_line_down => .{ .title = "Copy Line Down", .key = "⇧⌥↓", .menu = "Selection", .id = "sel.copyDown" },
+        .delete_line => .{ .title = "Delete Line", .accel = "CmdOrCtrl+Shift+K", .menu = "Selection", .id = "sel.deleteLine" },
+        .insert_line_below => .{ .title = "Insert Line Below", .key = "⌘↵", .menu = "Selection", .id = "sel.lineBelow" },
+        .insert_line_above => .{ .title = "Insert Line Above", .key = "⇧⌘↵", .menu = "Selection", .id = "sel.lineAbove" },
+        .sort_lines_asc => .{ .title = "Sort Lines Ascending", .menu = "Selection", .id = "sel.sortAsc" },
+        .sort_lines_desc => .{ .title = "Sort Lines Descending", .menu = "Selection", .id = "sel.sortDesc" },
         .upper_case => .{ .title = "Transform to Uppercase", .menu = "Selection" },
         .lower_case => .{ .title = "Transform to Lowercase", .menu = "Selection" },
-        .camel_case => .{ .title = "Transform to Camel Case", .menu = "Selection" },
+        .camel_case => .{ .title = "Transform to Camel Case", .menu = "Selection", .id = "sel.camelCase" },
         .snake_case => .{ .title = "Transform to Snake Case", .menu = "Selection" },
         .trim_whitespace => .{ .title = "Trim Trailing Whitespace", .menu = "Selection" },
-        .command_palette => .{ .title = "Command Palette…", .accel = "CmdOrCtrl+Shift+P", .menu = "View" },
-        .toggle_sidebar => .{ .title = "Toggle Sidebar", .accel = "CmdOrCtrl+B", .menu = "View" },
-        .show_explorer => .{ .title = "Explorer", .accel = "CmdOrCtrl+Shift+E", .menu = "View" },
-        .show_search => .{ .title = "Search", .menu = "View" },
-        .show_scm => .{ .title = "Source Control", .accel = "Ctrl+Shift+G", .menu = "View" },
-        .toggle_terminal => .{ .title = "Toggle Terminal", .accel = "Ctrl+`", .menu = "View" },
-        .new_terminal => .{ .title = "New Terminal", .accel = "Ctrl+Shift+`", .menu = "View" },
+        .command_palette => .{ .title = "Command Palette…", .accel = "CmdOrCtrl+Shift+P", .menu = "Go", .id = "go.commands" },
+        .toggle_sidebar => .{ .title = "Toggle Sidebar", .accel = "CmdOrCtrl+B", .menu = "View", .id = "view.sidebar" },
+        .show_explorer => .{ .title = "Explorer", .accel = "CmdOrCtrl+Shift+E", .menu = "View", .id = "view.explorer" },
+        .show_search => .{ .title = "Search", .menu = "View", .id = "view.search" },
+        .show_scm => .{ .title = "Source Control", .accel = "Ctrl+Shift+G", .menu = "View", .id = "view.scm" },
+        .toggle_terminal => .{ .title = "Toggle Terminal", .accel = "Ctrl+`", .menu = "View", .id = "view.terminal" },
+        .new_terminal => .{ .title = "New Terminal", .accel = "Ctrl+Shift+`", .menu = "View", .id = "view.newTerminal" },
+        .terminal_tab => .{ .title = "New Terminal in Editor Area", .menu = "View", .id = "view.terminalTab" },
+        .terminal_move => .{ .title = "Move Terminal to Editor Area or Panel", .menu = "View", .id = "view.terminalMove" },
+        .kill_terminal => .{ .title = "Kill Terminal", .menu = "View", .id = "view.killTerminal" },
         .maximize_panel => .{ .title = "Maximize Panel", .menu = "View" },
-        .toggle_wrap => .{ .title = "Word Wrap", .key = "⌥Z", .menu = "View" },
-        .toggle_minimap => .{ .title = "Minimap", .menu = "View" },
-        .toggle_preview => .{ .title = "Toggle Preview", .key = "⇧⌘V", .menu = "View" },
-        .split_right => .{ .title = "Split Editor Right", .accel = "CmdOrCtrl+\\", .menu = "View" },
-        .toggle_column_lock => .{ .title = "Toggle Column Lock", .menu = "View" },
-        .move_terminal_to_column => .{ .title = "Move Terminal to Locked Right Column", .menu = "View" },
-        .zoom_in => .{ .title = "Zoom In", .accel = "CmdOrCtrl+=", .menu = "View" },
-        .zoom_out => .{ .title = "Zoom Out", .accel = "CmdOrCtrl+-", .menu = "View" },
-        .zoom_reset => .{ .title = "Reset Zoom", .accel = "CmdOrCtrl+0", .menu = "View" },
-        .theme_mycode => .{ .title = "Theme: MyCode", .menu = "View" },
-        .theme_matrix => .{ .title = "Theme: The Matrix", .menu = "View" },
-        .theme_claude => .{ .title = "Theme: Claude", .menu = "View" },
-        .theme_qoder => .{ .title = "Theme: Qoder", .menu = "View" },
-        .icons_material => .{ .title = "File Icon Theme: Material", .menu = "View" },
-        .icons_lucide => .{ .title = "File Icon Theme: Lucide", .menu = "View" },
-        .appearance_system => .{ .title = "Appearance: Follow System", .menu = "View" },
-        .appearance_light => .{ .title = "Appearance: Light", .menu = "View" },
-        .appearance_dark => .{ .title = "Appearance: Dark", .menu = "View" },
-        .toggle_sidebar_right => .{ .title = "Sidebar on Right", .menu = "View" },
-        .toggle_project_tabs => .{ .title = "Project Tabs", .menu = "View" },
-        .toggle_project_icons => .{ .title = "Project Icons", .menu = "View" },
-        .quick_open => .{ .title = "Go to File…", .accel = "CmdOrCtrl+P", .menu = "Go" },
-        .go_to_line => .{ .title = "Go to Line…", .key = "⌃G", .menu = "Go" },
-        .go_to_symbol => .{ .title = "Go to Symbol…", .accel = "CmdOrCtrl+Shift+O", .menu = "Go" },
-        .next_tab => .{ .title = "Next Tab", .accel = "Ctrl+Tab", .menu = "Go" },
-        .prev_tab => .{ .title = "Previous Tab", .accel = "Ctrl+Shift+Tab", .menu = "Go" },
-        .next_column => .{ .title = "Next Column", .menu = "Go" },
-        .next_change => .{ .title = "Next Change", .accel = "Alt+F5", .menu = "Go" },
-        .prev_change => .{ .title = "Previous Change", .accel = "Shift+Alt+F5", .menu = "Go" },
-        .next_project => .{ .title = "Next Project", .accel = "CmdOrCtrl+Shift+]", .menu = "Go" },
-        .prev_project => .{ .title = "Previous Project", .accel = "CmdOrCtrl+Shift+[", .menu = "Go" },
-        .next_terminal => .{ .title = "Next Terminal", .menu = "Go" },
-        .prev_terminal => .{ .title = "Previous Terminal", .menu = "Go" },
-        .git_commit => .{ .title = "Commit", .menu = "Git" },
-        .git_commit_amend => .{ .title = "Amend Last Commit", .menu = "Git" },
-        .git_undo_commit => .{ .title = "Undo Last Commit", .menu = "Git" },
-        .git_push => .{ .title = "Push", .menu = "Git" },
-        .git_force_push => .{ .title = "Force Push…", .menu = "Git" },
-        .git_pull => .{ .title = "Pull", .menu = "Git" },
-        .git_pull_rebase => .{ .title = "Pull (Rebase)", .menu = "Git" },
-        .git_pull_merge => .{ .title = "Pull (Merge)", .menu = "Git" },
-        .git_fetch => .{ .title = "Fetch", .menu = "Git" },
-        .git_sync => .{ .title = "Sync", .menu = "Git" },
-        .git_switch_branch => .{ .title = "Switch Branch…", .menu = "Git" },
-        .git_create_branch => .{ .title = "Create Branch…", .menu = "Git" },
-        .git_rename_branch => .{ .title = "Rename Branch…", .menu = "Git" },
-        .git_delete_branch => .{ .title = "Delete Branch…", .menu = "Git" },
-        .git_stash => .{ .title = "Stash…", .menu = "Git" },
-        .git_stash_untracked => .{ .title = "Stash (Include Untracked)…", .menu = "Git" },
-        .git_stash_apply_latest => .{ .title = "Apply Latest Stash", .menu = "Git" },
-        .git_stash_pop => .{ .title = "Pop Latest Stash", .menu = "Git" },
-        .git_stash_apply => .{ .title = "Apply Stash…", .menu = "Git" },
-        .git_stash_pop_pick => .{ .title = "Pop Stash…", .menu = "Git" },
-        .git_stash_view => .{ .title = "View Stash…", .menu = "Git" },
-        .git_stash_drop => .{ .title = "Drop Stash…", .menu = "Git" },
-        .open_changes => .{ .title = "Open Changes", .menu = "Git" },
-        .stage_change => .{ .title = "Stage Change at Caret", .menu = "Git" },
-        .revert_change => .{ .title = "Revert Change at Caret", .menu = "Git" },
-        .toggle_blame => .{ .title = "Inline Blame", .menu = "Git" },
-        .accept_current => .{ .title = "Accept Current Change", .menu = "Git" },
-        .accept_incoming => .{ .title = "Accept Incoming Change", .menu = "Git" },
-        .accept_both => .{ .title = "Accept Both Changes", .menu = "Git" },
-        .accept_all_current => .{ .title = "Accept All Current Changes", .menu = "Git" },
-        .accept_all_incoming => .{ .title = "Accept All Incoming Changes", .menu = "Git" },
-        .next_conflict => .{ .title = "Next Conflict", .menu = "Git" },
-        .prev_conflict => .{ .title = "Previous Conflict", .menu = "Git" },
-        .add_review_comment => .{ .title = "Add Review Comment", .key = "⇧⌘M", .menu = "Git" },
-        .copy_review => .{ .title = "Copy Review Comments", .menu = "Git" },
-        .send_review => .{ .title = "Send Review Comments to Terminal", .menu = "Git" },
-        .clear_review => .{ .title = "Clear Review Comments", .menu = "Git" },
+        .toggle_word_wrap => .{ .title = "Word Wrap", .menu = "View", .id = "view.wordWrap" },
+        .toggle_wrap => .{ .title = "Toggle Word Wrap in Tab", .key = "⌥Z", .menu = "View", .id = "view.wordWrapTab" },
+        .toggle_minimap => .{ .title = "Minimap", .menu = "View", .id = "view.minimap" },
+        .toggle_preview => .{ .title = "Toggle Preview", .key = "⇧⌘V", .menu = "View", .id = "view.togglePreview" },
+        .split_right => .{ .title = "Split Right", .accel = "CmdOrCtrl+\\", .menu = "View", .id = "view.splitRight" },
+        .prev_column => .{ .title = "Focus Previous Column", .accel = if (mac) "CmdOrCtrl+Alt+Left" else "", .menu = "View", .id = "view.prevColumn" },
+        .move_tab_next => .{ .title = "Move Tab to Next Column", .menu = "View", .id = "view.moveTabNext" },
+        .move_tab_prev => .{ .title = "Move Tab to Previous Column", .menu = "View", .id = "view.moveTabPrev" },
+        .toggle_column_lock => .{ .title = "Toggle Column Lock", .menu = "View", .id = "view.lockColumn" },
+        .move_terminal_to_column => .{ .title = "Move Terminal to Locked Right Column", .menu = "View", .id = "view.terminalLockRight" },
+        .zoom_in => .{ .title = "Zoom In", .accel = "CmdOrCtrl+=", .menu = "View", .id = "view.zoomIn" },
+        .zoom_out => .{ .title = "Zoom Out", .accel = "CmdOrCtrl+-", .menu = "View", .id = "view.zoomOut" },
+        .zoom_reset => .{ .title = "Reset Zoom", .accel = "CmdOrCtrl+0", .menu = "View", .id = "view.zoomReset" },
+        .theme_mycode => .{ .title = "Theme: MyCode", .menu = "View", .id = "view.theme.mayoi" },
+        .theme_matrix => .{ .title = "Theme: The Matrix", .menu = "View", .id = "view.theme.matrix" },
+        .theme_claude => .{ .title = "Theme: Claude", .menu = "View", .id = "view.theme.claude" },
+        .theme_qoder => .{ .title = "Theme: Qoder", .menu = "View", .id = "view.theme.qoder" },
+        .icons_material => .{ .title = "File Icon Theme: Material", .menu = "View", .id = "view.iconTheme.material" },
+        .icons_lucide => .{ .title = "File Icon Theme: Lucide", .menu = "View", .id = "view.iconTheme.lucide" },
+        .appearance_system => .{ .title = "Appearance: Follow System", .menu = "View", .id = "view.appearance.system" },
+        .appearance_light => .{ .title = "Appearance: Light", .menu = "View", .id = "view.appearance.light" },
+        .appearance_dark => .{ .title = "Appearance: Dark", .menu = "View", .id = "view.appearance.dark" },
+        .toggle_sidebar_right => .{ .title = "Sidebar on Right", .menu = "View", .id = "view.sidebarRight" },
+        .toggle_project_tabs => .{ .title = "Project Tabs", .menu = "View", .id = "view.projectTabs" },
+        .toggle_project_icons => .{ .title = "Project Icons", .menu = "View", .id = "view.projectIcons" },
+        .quick_open => .{ .title = "Go to File…", .accel = "CmdOrCtrl+P", .menu = "Go", .id = "go.quickOpen" },
+        .go_to_line => .{ .title = "Go to Line…", .accel = "Ctrl+G", .menu = "Go", .id = "go.line" },
+        .go_to_symbol => .{ .title = "Go to Symbol…", .accel = "CmdOrCtrl+Shift+O", .menu = "Go", .id = "go.symbol" },
+        .go_to_bracket => .{ .title = "Go to Bracket", .accel = "CmdOrCtrl+Shift+\\", .menu = "Go", .id = "go.bracket" },
+        .next_tab => .{ .title = "Next Tab", .accel = "Ctrl+Tab", .menu = "Go", .id = "go.nextTab" },
+        .prev_tab => .{ .title = "Previous Tab", .accel = "Ctrl+Shift+Tab", .menu = "Go", .id = "go.prevTab" },
+        .next_column => .{ .title = "Focus Next Column", .accel = if (mac) "CmdOrCtrl+Alt+Right" else "", .menu = "View", .id = "view.nextColumn" },
+        .next_change => .{ .title = "Next Change", .accel = "Alt+F5", .menu = "Git", .id = "git.nextChange" },
+        .prev_change => .{ .title = "Previous Change", .accel = "Shift+Alt+F5", .menu = "Git", .id = "git.prevChange" },
+        .next_project => .{ .title = "Next Project", .accel = "CmdOrCtrl+Shift+]", .menu = "Go", .id = "go.nextProject" },
+        .prev_project => .{ .title = "Previous Project", .accel = "CmdOrCtrl+Shift+[", .menu = "Go", .id = "go.prevProject" },
+        .next_terminal => .{ .title = "Next Terminal", .menu = "View", .id = "view.nextTerminal" },
+        .prev_terminal => .{ .title = "Previous Terminal", .menu = "View", .id = "view.prevTerminal" },
+        .git_commit => .{ .title = "Commit", .menu = "Git", .id = "git.commit" },
+        .git_commit_push => .{ .title = "Commit & Push", .menu = "Git", .id = "git.commitPush" },
+        .git_commit_amend => .{ .title = "Amend Last Commit", .menu = "Git", .id = "git.amend" },
+        .git_undo_commit => .{ .title = "Undo Last Commit", .menu = "Git", .id = "git.undoCommit" },
+        .git_push => .{ .title = "Push", .menu = "Git", .id = "git.push" },
+        .git_force_push => .{ .title = "Force Push…", .menu = "Git", .id = "git.forcePush" },
+        .git_pull => .{ .title = "Pull", .menu = "Git", .id = "git.pull" },
+        .git_pull_rebase => .{ .title = "Pull (Rebase)", .menu = "Git", .id = "git.pullRebase" },
+        .git_pull_merge => .{ .title = "Pull (Merge)", .menu = "Git", .id = "git.pullMerge" },
+        .git_fetch => .{ .title = "Fetch", .menu = "Git", .id = "git.fetch" },
+        .git_sync => .{ .title = "Sync", .menu = "Git", .id = "git.sync" },
+        .git_switch_branch => .{ .title = "Switch Branch…", .menu = "Git", .id = "git.switchBranch" },
+        .git_create_branch => .{ .title = "Create Branch…", .menu = "Git", .id = "git.createBranch" },
+        .git_rename_branch => .{ .title = "Rename Branch…", .menu = "Git", .id = "git.renameBranch" },
+        .git_delete_branch => .{ .title = "Delete Branch…", .menu = "Git", .id = "git.deleteBranch" },
+        .git_stash => .{ .title = "Stash…", .menu = "Git", .id = "git.stash" },
+        .git_stash_untracked => .{ .title = "Stash (Include Untracked)…", .menu = "Git", .id = "git.stashIncludeUntracked" },
+        .git_stash_apply_latest => .{ .title = "Apply Latest Stash", .menu = "Git", .id = "git.stashApplyLatest" },
+        .git_stash_pop => .{ .title = "Pop Latest Stash", .menu = "Git", .id = "git.stashPopLatest" },
+        .git_stash_apply => .{ .title = "Apply Stash…", .menu = "Git", .id = "git.stashApply" },
+        .git_stash_pop_pick => .{ .title = "Pop Stash…", .menu = "Git", .id = "git.stashPop" },
+        .git_stash_view => .{ .title = "View Stash…", .menu = "Git", .id = "git.stashView" },
+        .git_stash_drop => .{ .title = "Drop Stash…", .menu = "Git", .id = "git.stashDrop" },
+        .git_continue => .{ .title = "Continue Merge, Rebase or Cherry-Pick", .menu = "Git", .id = "git.continue" },
+        .git_abort => .{ .title = "Abort Merge, Rebase or Cherry-Pick…", .menu = "Git", .id = "git.abort" },
+        .open_changes => .{ .title = "Open Changes", .menu = "Git", .id = "git.openChanges" },
+        .open_all_changes => .{ .title = "Open All Changes", .menu = "Git", .id = "git.openAllChanges" },
+        .show_change => .{ .title = "Show Change", .menu = "Git", .id = "git.showChange" },
+        .stage_change => .{ .title = "Stage Change", .menu = "Git", .id = "git.stageChange" },
+        .revert_change => .{ .title = "Revert Change", .menu = "Git", .id = "git.revertChange" },
+        .stage_file => .{ .title = "Stage File", .menu = "Git", .id = "git.stageFile" },
+        .unstage_file => .{ .title = "Unstage File", .menu = "Git", .id = "git.unstageFile" },
+        .stage_all => .{ .title = "Stage All Changes", .menu = "Git", .id = "git.stageAll" },
+        .toggle_blame => .{ .title = "Inline Blame", .menu = "Git", .id = "git.blame" },
+        .accept_current => .{ .title = "Accept Current Change", .menu = "Git", .id = "git.acceptCurrent" },
+        .accept_incoming => .{ .title = "Accept Incoming Change", .menu = "Git", .id = "git.acceptIncoming" },
+        .accept_both => .{ .title = "Accept Both Changes", .menu = "Git", .id = "git.acceptBoth" },
+        .accept_all_current => .{ .title = "Accept All Current Changes", .menu = "Git", .id = "git.acceptAllCurrent" },
+        .accept_all_incoming => .{ .title = "Accept All Incoming Changes", .menu = "Git", .id = "git.acceptAllIncoming" },
+        .next_conflict => .{ .title = "Next Conflict", .menu = "Git", .id = "git.nextConflict" },
+        .prev_conflict => .{ .title = "Previous Conflict", .menu = "Git", .id = "git.prevConflict" },
+        .add_review_comment => .{ .title = "Add Review Comment", .key = "⇧⌘M", .menu = "Git", .id = "review.comment" },
+        .copy_review => .{ .title = "Copy Review Comments", .menu = "Git", .id = "review.copy" },
+        .send_review => .{ .title = "Send Review Comments to Terminal", .menu = "Git", .id = "review.send" },
+        .clear_review => .{ .title = "Clear Review Comments", .menu = "Git", .id = "review.clear" },
         .show_all_branches => .{ .title = "Show All Branches", .menu = "Git" },
         .scm_tree => .{ .title = "View Changes as Tree", .menu = "Git" },
         .git_init => .{ .title = "Initialize Repository", .menu = "Git" },
-        .git_refresh => .{ .title = "Refresh", .menu = "Git" },
+        .git_refresh => .{ .title = "Refresh Source Control", .menu = "Git", .id = "git.refresh" },
         .refresh_explorer => .{ .title = "Refresh Explorer" },
         .collapse_folders => .{ .title = "Collapse Folders in Explorer" },
         .reveal_active => .{ .title = "Reveal Active File in Explorer" },
-        .copy_path => .{ .title = "Copy Path of Active File" },
-        .copy_relative_path => .{ .title = "Copy Relative Path of Active File" },
-        .reveal_in_os => .{ .title = "Reveal Active File in File Explorer" },
-        .indent_tabs => .{ .title = "Indent Using Tabs" },
-        .indent_spaces_2 => .{ .title = "Indent Using 2 Spaces" },
-        .indent_spaces_4 => .{ .title = "Indent Using 4 Spaces" },
-        .indent_spaces_8 => .{ .title = "Indent Using 8 Spaces" },
+        .copy_path => .{ .title = "Copy Path of Active File", .id = "file.copyPath" },
+        .copy_relative_path => .{ .title = "Copy Relative Path of Active File", .id = "file.copyRelativePath" },
+        .reveal_in_os => .{ .title = "Reveal Active File in File Explorer", .id = "file.reveal" },
+        .indent_tabs => .{ .title = "Indent Using Tabs", .id = "sel.indentTabs" },
+        .indent_spaces_2 => .{ .title = "Indent Using 2 Spaces", .id = "sel.indent2" },
+        .indent_spaces_4 => .{ .title = "Indent Using 4 Spaces", .id = "sel.indent4" },
+        .indent_spaces_8 => .{ .title = "Indent Using 8 Spaces", .id = "sel.indent8" },
         .check_updates => .{ .title = "Check for Updates…", .menu = "Help" },
     };
 }
 
 pub const all = std.enums.values(Cmd);
 
-/// A command by its id: its name, as `toggle_sidebar` or `mycode.toggle_sidebar`.
+/// A command by its id: its name, as `toggle_sidebar` or
+/// `mycode.toggle_sidebar`, or the Go app's (`view.sidebar`).
 pub fn byId(id: []const u8) ?Cmd {
     const n = if (std.mem.startsWith(u8, id, "mycode.")) id[7..] else id;
-    return std.meta.stringToEnum(Cmd, n);
-}
-
-/// What the menu bar's items call: they queue the command for the next frame.
-pub fn Handler(comptime Target: type) type {
-    return struct {
-        pub fn of(comptime cmd: Cmd) fn (*Target, *myzig.menu.Item) void {
-            return struct {
-                fn f(t: *Target, _: *myzig.menu.Item) void {
-                    t.queue(cmd);
-                }
-            }.f;
-        }
-    };
-}
-
-const menu_names = [_][]const u8{ "File", "Edit", "Selection", "View", "Go", "Git", "Help" };
-
-/// The menu bar, built from the commands' menus, in order, with the
-/// recent folders under File → Open Recent. Its items are in `a`, kept
-/// while the menu shows.
-pub fn menuBar(comptime Target: type, target: *Target, a: std.mem.Allocator, recent: []const []const u8) ![]const myzig.MenuItem {
-    const H = Handler(Target);
-    var bar: std.ArrayList(myzig.MenuItem) = .empty;
-    inline for (menu_names) |menu_name| {
-        const items = comptime blk: {
-            @setEvalBranchQuota(100_000);
-            var n: usize = 0;
-            for (all) |cmd| if (std.mem.eql(u8, info(cmd).menu, menu_name)) {
-                n += 1;
-            };
-            var cmds: [n]Cmd = undefined;
-            var i: usize = 0;
-            for (all) |cmd| if (std.mem.eql(u8, info(cmd).menu, menu_name)) {
-                cmds[i] = cmd;
-                i += 1;
-            };
-            const final = cmds;
-            break :blk final;
-        };
-        var list: std.ArrayList(myzig.MenuItem) = .empty;
-        inline for (items) |cmd| {
-            const inf = comptime info(cmd);
-            if (cmd == .open_recent) {
-                // The last ten folders, then More… and Clear.
-                var sub: std.ArrayList(myzig.MenuItem) = .empty;
-                inline for (0..10) |k| if (k < recent.len) {
-                    try sub.append(a, .{ .label = try a.dupe(u8, recent[k]), .click = .of(target, Target.recentHandler(k)) });
-                };
-                if (recent.len > 0) try sub.append(a, .separator);
-                try sub.append(a, .{ .label = "More…", .accelerator = "", .click = .of(target, H.of(.open_recent)) });
-                try sub.append(a, .{ .label = "Clear Recently Opened", .click = .of(target, Target.clearRecentItem) });
-                try list.append(a, .{ .label = "Open Recent", .submenu = sub.items });
-            } else try list.append(a, .{ .label = inf.title, .accelerator = inf.accel, .click = .of(target, H.of(cmd)) });
-        }
-        try bar.append(a, .{ .label = menu_name, .submenu = list.items });
+    if (std.meta.stringToEnum(Cmd, n)) |c| return c;
+    for (all) |c| {
+        const go = info(c).id;
+        if (go.len > 0 and std.mem.eql(u8, go, n)) return c;
     }
-    return bar.items;
+    return null;
+}
+
+test byId {
+    try std.testing.expectEqual(Cmd.toggle_sidebar, byId("mycode.toggle_sidebar").?);
+    try std.testing.expectEqual(Cmd.stage_all, byId("git.stageAll").?);
+    try std.testing.expectEqual(Cmd.toggle_wrap, byId("view.wordWrapTab").?);
+    try std.testing.expect(byId("nothing") == null);
 }

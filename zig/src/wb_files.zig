@@ -362,6 +362,44 @@ pub fn newTerminalIn(wb: *Workbench, col: usize, profile: ?usize, dir: []const u
     _ = wb.editors.add(it, @min(col, wb.editors.cols.items.len - 1)) catch {};
 }
 
+/// Moves the terminal of the panel into the focused column, after its tab;
+/// a terminal tab shown goes to the panel.
+pub fn moveTerminal(wb: *Workbench) void {
+    const ed = &wb.editors;
+    if (ed.current()) |it| if (it.body == .terminal and !(wb.panel.open and panelFocused(wb))) {
+        const t = it.body.terminal;
+        const l = ed.currentLoc().?;
+        _ = ed.take(l);
+        wb.gpa.destroy(it);
+        wb.panel.add(t);
+        return;
+    };
+    if (wb.panel.terms.items.len == 0) return;
+    const t = wb.panel.take(wb.panel.active);
+    const it = ed.newItem(.{ .terminal = t }, false) catch return wb.panel.add(t);
+    t.focus = true;
+    const col = ed.focusCol();
+    col.items.insert(wb.gpa, @min(col.active + 1, col.items.items.len), it) catch {
+        it.destroy(wb.gpa);
+        return;
+    };
+    ed.show(.{ .col = ed.focus, .idx = @min(col.active + 1, col.items.items.len - 1) });
+}
+
+/// The panel's terminal has the keyboard.
+fn panelFocused(wb: *Workbench) bool {
+    for (wb.panel.terms.items) |t| if (t.focused()) return true;
+    return false;
+}
+
+/// Ends the panel's terminal shown, and its shell.
+pub fn killTerminal(wb: *Workbench) void {
+    if (wb.panel.terms.items.len == 0) return;
+    const t = wb.panel.take(wb.panel.active);
+    t.destroy();
+    if (wb.panel.current()) |n| n.focus = true;
+}
+
 /// Moves the panel's terminal into a locked column on the right, made when
 /// there is none.
 pub fn terminalToLockedColumn(wb: *Workbench) void {
@@ -400,6 +438,7 @@ pub fn tabRequest(wb: *Workbench, c: *ui.Context, req: columns.Editors.Request) 
         },
         .open_changes => |p| wbgit.openChangesTab(wb, p, true),
         .to_panel => |t| wb.panel.add(t),
+        .to_locked => |t| toLockedColumn(wb, t),
         .copy_path => |p| _ = myzig.clipboard.writeText(p),
         .new_terminal_in => |ci| newTerminalIn(wb, ci, null, wb.root),
     }

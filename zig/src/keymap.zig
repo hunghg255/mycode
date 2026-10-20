@@ -158,6 +158,17 @@ pub const Keymap = struct {
         return null;
     }
 
+    /// Whether the file binds the keys of accelerator `accel` (as the first
+    /// of a chord too), or takes `cmd` off them: the menu then leaves them.
+    pub fn takesAccel(k: *const Keymap, accel: []const u8, cmd: Cmd) bool {
+        const key = parseKey(accel) orelse return false;
+        for (k.bindings) |b| {
+            if (b.remove and b.cmd == cmd) return true;
+            if (!b.remove and eqlKey(b.keys[0], key)) return true;
+        }
+        return false;
+    }
+
     /// The key the file binds a command to, for menus and the palette.
     pub fn keyFor(k: *const Keymap, cmd: Cmd) ?Key {
         var i = k.bindings.len;
@@ -169,6 +180,11 @@ pub const Keymap = struct {
         return null;
     }
 };
+
+/// Two keys are the same, Command being Control off macOS.
+pub fn sameKey(a: Key, b: Key) bool {
+    return eqlKey(a, b);
+}
 
 fn eqlKey(a: Key, b: Key) bool {
     // Command is Control off macOS.
@@ -192,7 +208,9 @@ pub fn parseKey(s: []const u8) ?Key {
             last = "+";
             continue;
         }
-        if (eq(part, "cmd") or eq(part, "meta") or eq(part, "win")) {
+        if (eq(part, "cmdorctrl") or eq(part, "commandorcontrol")) {
+            k.cmd = true;
+        } else if (eq(part, "cmd") or eq(part, "meta") or eq(part, "win")) {
             k.cmd = true;
         } else if (eq(part, "ctrl")) {
             if (ui.keys.mac) k.ctrl = true else k.cmd = true;

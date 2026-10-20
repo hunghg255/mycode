@@ -11,6 +11,9 @@ pub fn init(gpa: std.mem.Allocator, base: *const std.process.Environ.Map) !void 
     var m = try base.clone(gpa);
     try m.put("GIT_TERMINAL_PROMPT", "0");
     try m.put("GIT_OPTIONAL_LOCKS", "0");
+    // Git's words in English, which the app reads; no editor for messages.
+    try m.put("LC_ALL", "C");
+    try m.put("GIT_EDITOR", "true");
     env = m;
 }
 

@@ -87,6 +87,11 @@ pub const Term = struct {
         return term;
     }
 
+    /// It has the keyboard (as of the last frame).
+    pub fn focused(term: *const Term) bool {
+        return term.t.view_state.focused;
+    }
+
     pub fn destroy(term: *Term) void {
         term.t.destroy();
         for (term.argv) |a| term.gpa.free(a);

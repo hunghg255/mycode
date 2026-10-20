@@ -186,12 +186,18 @@ pub const Shell = struct {
         if (std.ascii.eqlIgnoreCase(path, sh.store.keys_path)) sh.main.loadKeys();
     }
 
+    /// A check by a command in the palette that has its setting on.
+    pub fn isOn(ctx: *anyopaque, cmd: Cmd) bool {
+        const sh: *Shell = @ptrCast(@alignCast(ctx));
+        return @import("menubar.zig").isOn(cmd, &sh.store.s) orelse false;
+    }
+
     /// A key shown by a command in the palette: keybindings.json's, or its own.
     pub fn keyLabel(ctx: *anyopaque, c: *ui.Context, cmd: Cmd) []const u8 {
         const sh: *Shell = @ptrCast(@alignCast(ctx));
         if (sh.keymap.keyFor(cmd)) |k| return ui.shortcutLabel(c, k.shortcut());
         const inf = commands.info(cmd);
-        if (inf.accel.len > 0) return quickopen.accelLabel(c, inf.accel);
+        if (inf.accel.len > 0) return if (sh.keymap.takesAccel(inf.accel, cmd)) "" else quickopen.accelLabel(c, inf.accel);
         if (inf.key.len > 0) return keyText(c, inf.key);
         return "";
     }
@@ -341,6 +347,7 @@ pub const Shell = struct {
     pub fn view(sh: *Shell, c: *ui.Context) void {
         if (c.input.mouse.x > -1e5) sh.last_mouse = c.input.mouse;
         if (sh.store.reload()) {}
+        sh.main.menuIfChanged();
         sh.applyTheme(c);
         sh.updateTitle();
         ui.row(c, .{ .width = .fill, .height = .fill, .align_items = .stretch, .background = .hex(sh.palette.editor) });

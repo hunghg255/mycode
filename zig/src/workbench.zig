@@ -51,6 +51,7 @@ pub const Confirm = enum {
     checkout_detached,
     close_project,
     discard_hunk_closed,
+    abort_op,
 };
 
 pub const Workbench = struct {
@@ -141,6 +142,7 @@ pub const Workbench = struct {
         wb.search.window = shell.window;
         wb.quick.key_label = Shell.keyLabel;
         wb.quick.key_ctx = shell;
+        wb.quick.is_on = Shell.isOn;
         wb.watcher = FsWatch.start(gpa, io, r, wb, onDiskChange);
         @import("jobs.zig").live(wb, gpa);
         return wb;
@@ -426,7 +428,16 @@ pub const Workbench = struct {
                 if (wb.search.changed()) wb.search.start(wb.shell.store.s.filesExclude, wb.dirtyTexts(c.alloc()));
                 wbfiles.searchEvent(wb, c, wb.search.view(c));
             },
-            .scm => wbgit.scmEvent(wb, c, wb.scm.view(c, wb.runner.busy, wb.statusColors())),
+            .scm => {
+                // The tree and the branches the graph shows are settings.
+                const st = &wb.shell.store.s;
+                wb.scm.tree = st.scmTree;
+                if (wb.scm.graph.all != st.scmAllBranches) {
+                    wb.scm.graph.all = st.scmAllBranches;
+                    if (wb.scm.top) |top| wb.scm.graph.load(wb.io, top);
+                }
+                wbgit.scmEvent(wb, c, wb.scm.view(c, wb.runner.busy, wb.statusColors()));
+            },
         }
     }
 

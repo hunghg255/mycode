@@ -107,7 +107,7 @@ pub const Editors = struct {
     /// Asked of the workbench by the tab menu.
     request: ?Request = null,
 
-    pub const Request = union(enum) { reveal: []const u8, open_changes: []const u8, to_panel: *Term, copy_path: []const u8, new_terminal_in: usize };
+    pub const Request = union(enum) { reveal: []const u8, open_changes: []const u8, to_panel: *Term, to_locked: *Term, copy_path: []const u8, new_terminal_in: usize };
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io) Editors {
         var e: Editors = .{ .gpa = gpa, .io = io };
@@ -524,6 +524,10 @@ pub const Editors = struct {
                     _ = e.take(l);
                     e.gpa.destroy(it);
                     e.request = .{ .to_panel = t };
+                } else if (!col.locked and m.item("Move Terminal to Locked Right Column", .{})) {
+                    _ = e.take(l);
+                    e.gpa.destroy(it);
+                    e.request = .{ .to_locked = t };
                 }
             },
             else => if (it.path()) |p| {

@@ -28,6 +28,8 @@ pub const Kind = enum {
     undo_commit,
     commit,
     commit_amend,
+    continue_op,
+    abort_op,
     other,
 };
 

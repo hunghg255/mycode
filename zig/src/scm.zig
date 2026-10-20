@@ -13,6 +13,52 @@ const StatusColors = @import("explorer.zig").StatusColors;
 
 pub const Group = enum { merge, staged, changes, untracked };
 
+/// A command stopped part way for conflicts, by the files it leaves in the
+/// Git folder; a rebase picks commits as a cherry-pick does, so it is
+/// looked for first.
+pub const Op = enum {
+    none,
+    rebase,
+    cherry_pick,
+    revert,
+    merge,
+
+    pub fn title(op: Op) []const u8 {
+        return switch (op) {
+            .none => "",
+            .rebase => "Rebase",
+            .cherry_pick => "Cherry-Pick",
+            .revert => "Revert",
+            .merge => "Merge",
+        };
+    }
+
+    /// Its git command: `git <name> --continue`.
+    pub fn name(op: Op) []const u8 {
+        return switch (op) {
+            .none => "",
+            .rebase => "rebase",
+            .cherry_pick => "cherry-pick",
+            .revert => "revert",
+            .merge => "merge",
+        };
+    }
+
+    pub fn of(io: std.Io, git_dir: []const u8) Op {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const marks = [_]struct { []const u8, Op }{
+            .{ "rebase-merge", .rebase }, .{ "rebase-apply", .rebase }, .{ "CHERRY_PICK_HEAD", .cherry_pick },
+            .{ "REVERT_HEAD", .revert },  .{ "MERGE_HEAD", .merge },
+        };
+        for (marks) |m| {
+            const p = std.fmt.bufPrint(&buf, "{s}{c}{s}", .{ git_dir, std.fs.path.sep, m[0] }) catch continue;
+            std.Io.Dir.cwd().access(io, p, .{}) catch continue;
+            return m[1];
+        }
+        return .none;
+    }
+};
+
 pub const Event = union(enum) {
     none,
     /// A change chosen (relative path), to show in the Changes tab.
@@ -34,6 +80,8 @@ pub const Event = union(enum) {
     unstage_all,
     discard_all: Group,
     stash_files: []const []const u8,
+    continue_op,
+    abort_op,
     /// A change pressed: it may be dragged into a column (relative path).
     press: []const u8,
 };
@@ -66,6 +114,9 @@ pub const Scm = struct {
     order: std.ArrayList([]const u8) = .empty,
     list_focus: bool = false,
     list_id: u64 = 0,
+    /// The Git folder, and the command stopped part way in it.
+    git_dir: ?[]u8 = null,
+    op: Op = .none,
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io, root: []const u8) Scm {
         return .{ .gpa = gpa, .io = io, .root = root, .graph = .init(gpa) };
@@ -77,6 +128,7 @@ pub const Scm = struct {
         s.chosen.deinit(s.gpa);
         s.order.deinit(s.gpa);
         if (s.top) |t| s.gpa.free(t);
+        if (s.git_dir) |d| s.gpa.free(d);
         if (s.err) |e| s.gpa.free(e);
         if (s.branch) |b| s.gpa.free(b);
         s.graph.deinit();
@@ -156,7 +208,32 @@ pub const Scm = struct {
         if (s.branch) |b| s.gpa.free(b);
         s.branch = git.branch(s.gpa, s.io, top);
         s.ab = branches.aheadBehind(s.gpa, s.io, top);
+        if (s.git_dir == null) s.git_dir = git.line(s.gpa, s.io, top, &.{ "rev-parse", "--absolute-git-dir" });
+        s.op = if (s.git_dir) |d| Op.of(s.io, d) else .none;
         if (s.commits_open) s.graph.load(s.io, top);
+    }
+
+    /// Which command stopped for conflicts, and how many are left, with the
+    /// buttons that go on with it and undo it.
+    fn opBanner(s: *Scm, c: *ui.Context, ev_in: Event) Event {
+        const t = c.theme;
+        var ev = ev_in;
+        const conflicts = s.count(.merge);
+        const tint = if (conflicts > 0) t.danger else t.accent;
+        const bar = ui.div(c).row().wFull().px(10).py(2);
+        defer bar.end();
+        const box = ui.div(c).row().wFull().gap(6).itemsCenter().pl(8).pr(4).py(4).rounded(5).bg(tint.alpha(0.12));
+        defer box.end();
+        ui.icon(c, "arrow.triangle.branch", .{ .size = 11, .color = tint });
+        const label = if (conflicts > 0)
+            c.print("{s} in progress · {d} conflict{s}", .{ s.op.title(), conflicts, if (conflicts == 1) "" else "s" })
+        else
+            c.print("{s} in progress", .{s.op.title()});
+        ui.text(c, label, .{ .size = 11.5 });
+        ui.spacer(c);
+        if (ui.button(c, "Abort", .{ .variant = .ghost, .size = 11 }).clicked) ev = .abort_op;
+        if (ui.button(c, "Continue", .{ .variant = .ghost, .size = 11 }).clicked) ev = .continue_op;
+        return ev;
     }
 
     pub fn setError(s: *Scm, msg: []const u8) void {
@@ -220,11 +297,12 @@ pub const Scm = struct {
                 const items = [_]struct { []const u8, @import("commands.zig").Cmd }{
                     .{ "Commit", .git_commit },              .{ "Amend Last Commit", .git_commit_amend }, .{ "Undo Last Commit", .git_undo_commit },
                     .{ "Fetch", .git_fetch },                .{ "Pull", .git_pull },                      .{ "Pull (Rebase)", .git_pull_rebase },
-                    .{ "Push", .git_push },                  .{ "Force Push…", .git_force_push },        .{ "Sync", .git_sync },
-                    .{ "Switch Branch…", .git_switch_branch }, .{ "Create Branch…", .git_create_branch }, .{ "Delete Branch…", .git_delete_branch },
+                    .{ "Pull (Merge)", .git_pull_merge },    .{ "Push", .git_push },                      .{ "Force Push…", .git_force_push },
+                    .{ "Sync", .git_sync },                  .{ "Switch Branch…", .git_switch_branch }, .{ "Create Branch…", .git_create_branch },
+                    .{ "Rename Branch…", .git_rename_branch }, .{ "Delete Branch…", .git_delete_branch },
                 };
                 for (items, 0..) |it, k| {
-                    if (k == 3 or k == 9) m.separator();
+                    if (k == 3 or k == 10) m.separator();
                     if (m.item(it[0], .{})) ev = .{ .run = it[1] };
                 }
                 if (m.submenu("Stash")) |sub| {
@@ -244,11 +322,12 @@ pub const Scm = struct {
                 if (m.item("Unstage All Changes", .{})) ev = .unstage_all;
                 if (m.item("Discard All Changes", .{})) ev = .{ .discard_all = .changes };
                 m.separator();
-                if (m.item("View as Tree", .{ .checked = s.tree })) s.tree = !s.tree;
+                if (m.item("View as Tree", .{ .checked = s.tree })) ev = .{ .run = .scm_tree };
                 if (m.item("Show All Branches", .{ .checked = s.graph.all })) ev = .{ .run = .show_all_branches };
                 if (m.item("Refresh", .{})) ev = .{ .run = .git_refresh };
             }
         }
+        if (s.op != .none) ev = s.opBanner(c, ev);
         // The message and the commit button.
         {
             ui.column(c, .{ .width = .fill, .padding = .xy(10, 4), .gap = 6 });

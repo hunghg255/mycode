@@ -47,6 +47,8 @@ pub const QuickOpen = struct {
     /// What `>` shows by a command: its key (from keybindings.json or its own).
     key_label: ?*const fn (ctx: *anyopaque, c: *ui.Context, cmd: commands.Cmd) []const u8 = null,
     key_ctx: *anyopaque = undefined,
+    /// Whether a command that turns something on has it on, for a check.
+    is_on: ?*const fn (ctx: *anyopaque, cmd: commands.Cmd) bool = null,
 
     pub fn deinit(q: *QuickOpen) void {
         if (q.files.len > 0) fs.freeStrings(q.gpa, q.files);
@@ -169,6 +171,7 @@ pub const QuickOpen = struct {
                 const inf = commands.info(q.cmds.items[i]);
                 ui.text(c, inf.title, .{ .size = 13 });
                 ui.spacer(c);
+                if (q.is_on) |f| if (f(q.key_ctx, q.cmds.items[i])) ui.icon(c, "checkmark", .{ .size = 12, .color = t.accent });
                 if (inf.menu.len > 0) ui.text(c, inf.menu, .{ .size = 11, .color = t.muted });
                 const keys = if (q.key_label) |f| f(q.key_ctx, c, q.cmds.items[i]) else "";
                 if (keys.len > 0) ui.text(c, keys, .{ .size = 11, .color = t.muted, .mono = true });

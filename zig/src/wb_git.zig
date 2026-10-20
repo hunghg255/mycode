@@ -44,8 +44,20 @@ fn slow(wb: *Workbench, kind: gitops.Kind, args: []const []const u8, subject: []
     if (!wb.runner.run(kind, t, args, subject)) _ = wb.toasts.show("A Git command is running");
 }
 
+/// Goes on with the command stopped for conflicts, once they are resolved
+/// and staged: a merge with a message commits it.
+fn continueOp(wb: *Workbench) void {
+    const op = wb.scm.op;
+    if (op == .none) return;
+    if (wb.scm.count(.merge) > 0) {
+        wb.scm.setError("Resolve the conflicts and stage the files first.");
+        return;
+    }
+    if (op != .rebase and std.mem.trim(u8, wb.scm.message.text(), " \r\n\t").len > 0) return commit(wb, false, false, false);
+    slow(wb, .continue_op, &.{ op.name(), "--continue" }, op.title());
+}
+
 pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
-    _ = c;
     const t = top(wb);
     if (t == null and cmd != .git_init and cmd != .git_refresh) {
         _ = wb.toasts.show("The folder isn't in a Git repository");
@@ -82,10 +94,22 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
         .git_stash_view => wb.picker.show(t.?, .stash_view),
         .git_stash_drop => wb.picker.show(t.?, .stash_drop),
         .show_all_branches => {
-            wb.scm.graph.all = !wb.scm.graph.all;
+            wb.shell.store.setBool("scmAllBranches", !wb.shell.store.s.scmAllBranches);
+            wb.scm.graph.all = wb.shell.store.s.scmAllBranches;
             wb.scm.graph.load(wb.io, t.?);
         },
-        .scm_tree => wb.scm.tree = !wb.scm.tree,
+        .scm_tree => wb.shell.store.setBool("scmTree", !wb.shell.store.s.scmTree),
+        .git_commit_push => commit(wb, wb.scm.count(.staged) == 0, false, true),
+        .stage_file, .unstage_file => if (wb.editors.current()) |it| if (it.path()) |p| {
+            const rel = fs.relative(t.?, p);
+            _ = quick(wb, if (cmd == .stage_file) &.{ "add", "--", rel } else &.{ "reset", "-q", "HEAD", "--", rel });
+        },
+        .stage_all => _ = quick(wb, &.{ "add", "-A", "--", "." }),
+        .git_continue => continueOp(wb),
+        .git_abort => if (wb.scm.op != .none) {
+            const op = wb.scm.op.title();
+            wb.ask(.abort_op, "", c.print("Abort the {s}?", .{op}), "HEAD, the staged changes and the files go back to how they were before it.", &.{ "Cancel", "Abort" });
+        },
         .toggle_blame => wb.shell.store.setBool("blame", !wb.shell.store.s.blame),
         else => {},
     }
@@ -164,6 +188,12 @@ pub fn onGitDone(ctx: *anyopaque, d: gitops.Done) void {
             wb.toastError("Git couldn't sign in", "Run the command once in the terminal so your SSH agent or credential helper remembers you.");
             return;
         }
+        // A rebase stops again at the next commit that conflicts; a pull
+        // or a merge may stop for conflicts too.
+        if (wb.scm.op != .none and wb.scm.count(.merge) > 0) {
+            _ = wb.toasts.add(.{ .title = "Stopped for conflicts", .description = "Resolve them, stage the files, then Continue.", .kind = .@"error" });
+            return;
+        }
         if (d.kind == .stash_pop or d.kind == .stash_apply) {
             wb.toastError("The stash clashes with your changes", "The files are left in conflict to resolve; the stash entry is kept.");
             return;
@@ -182,6 +212,8 @@ pub fn onGitDone(ctx: *anyopaque, d: gitops.Done) void {
         .stash_pop => _ = wb.toasts.show("Stash popped"),
         .stash_apply => _ = wb.toasts.show("Stash applied"),
         .checkout, .create_branch => _ = wb.toasts.show(wb.gpa.dupe(u8, "Switched branch") catch "Switched"),
+        .continue_op => _ = wb.toasts.show("Continued"),
+        .abort_op => _ = wb.toasts.show("Aborted"),
         .delete_branch => {
             wb.toast_restore_branch = wb.toasts.showAction("Branch deleted", "Undo");
         },
@@ -242,6 +274,8 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
             defer g.free(abs);
             @import("wb_files.zig").startFileDrag(wb, c, abs);
         },
+        .continue_op => run(wb, c, .git_continue),
+        .abort_op => run(wb, c, .git_abort),
         .stash_files => |ps| {
             const list = std.mem.join(c.alloc(), "\n", ps) catch return;
             wb.prompt.ask(.stash_files, if (ps.len == 1) "Stash this file: a message (or none)" else "Stash these files: a message (or none)", "", list);
@@ -325,6 +359,10 @@ pub fn confirmed(wb: *Workbench, c: *ui.Context, button: usize) void {
         .checkout_detached => if (button == 1) slow(wb, .checkout, &.{ "checkout", "--detach", arg }, arg),
         .close_project => if (button == 1) wb.shell.closeProjectNow(wb),
         .discard_hunk_closed => {},
+        .abort_op => if (button == 1 and wb.scm.op != .none) {
+            if (wb.scm.op != .rebase) wb.scm.message.clear();
+            slow(wb, .abort_op, &.{ wb.scm.op.name(), "--abort" }, wb.scm.op.title());
+        },
     }
     c.changed = true;
 }

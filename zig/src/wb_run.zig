@@ -39,7 +39,45 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
             }
         },
         .reopen_tab => ed.reopenClosed(),
-        .close_project => wb.shell.closeProject(wb),
+        .close_project, .close_folder => wb.shell.closeProject(wb),
+        .clear_recent => {
+            wb.shell.state.clearRecent();
+            wb.shell.state.save();
+        },
+        .undo => if (doc) |d| d.editor.area.undo(),
+        .redo => if (doc) |d| d.editor.area.redo(),
+        .find_next, .find_prev => if (doc) |d| d.editor.findNext(cmd == .find_prev),
+        .select_line => if (doc) |d| editing.selectLines(&d.editor.area),
+        .toggle_comment => if (doc) |d| d.editor.toggleComment(),
+        .indent_lines, .outdent_lines => if (doc) |d| d.editor.indentLines(cmd == .outdent_lines),
+        .go_to_bracket => if (doc) |d| d.editor.goToBracket(),
+        .toggle_word_wrap => wb.shell.store.setBool("wordWrap", !wb.shell.store.s.wordWrap),
+        .terminal_tab => wbfiles.newTerminalIn(wb, ed.focus, null, wb.root),
+        .terminal_move => wbfiles.moveTerminal(wb),
+        .kill_terminal => wbfiles.killTerminal(wb),
+        .prev_column => {
+            ed.focus = (ed.focus + ed.cols.items.len - 1) % ed.cols.items.len;
+            ed.switched = true;
+        },
+        .move_tab_next, .move_tab_prev => if (ed.currentLoc()) |l| {
+            const next = cmd == .move_tab_next;
+            if (next and l.col + 1 < ed.cols.items.len) {
+                ed.move(l, l.col + 1, null);
+            } else if (!next and l.col > 0) {
+                ed.move(l, l.col - 1, null);
+            } else if (ed.cols.items[l.col].items.items.len > 1) {
+                // A new column on that side.
+                const ni = ed.addColumn(if (next) l.col + 1 else l.col) catch return;
+                const from: @TypeOf(l) = .{ .col = if (ni <= l.col) l.col + 1 else l.col, .idx = l.idx };
+                ed.move(from, ni, 0);
+            }
+        },
+        .open_all_changes => wbgit.openChangesTab(wb, null, true),
+        .show_change => if (doc) |d| {
+            d.updateMarks(wb.scm.top);
+            const line = d.editor.area.caretLine();
+            if (line < d.marks.items.len and d.marks.items[line] != .none) d.peek = line;
+        },
         .find => if (doc) |d| d.editor.openFind(false),
         .replace => if (doc) |d| d.editor.openFind(true),
         .find_in_files, .replace_in_files, .show_search => {
