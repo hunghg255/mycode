@@ -63,6 +63,8 @@ pub const Doc = struct {
     refs: u32 = 1,
     /// The change whose HEAD lines show in a box (a gutter mark clicked).
     peek: ?usize = null,
+    /// The file was deleted on the disk (`reloadIfChanged` saw it gone).
+    disk_gone: bool = false,
     /// How far the editor is scrolled, as of the last frame, and a scroll
     /// to give it in the next (a tab opened again, a session restored).
     scroll_y: f32 = 0,
@@ -173,6 +175,8 @@ pub const Doc = struct {
     pub fn reloadIfChanged(d: *Doc) bool {
         if (d.path.len == 0 or d.binary) return false;
         const m = fs.mtime(d.io, d.path);
+        // Gone from the disk: the status bar says so; its text stays.
+        d.disk_gone = m == 0;
         if (m == 0 or m == d.mtime) return false;
         d.mtime = m;
         if (d.dirty()) return false;

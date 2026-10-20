@@ -51,6 +51,7 @@ pub const Confirm = enum {
     checkout_detached,
     close_project,
     discard_hunk_closed,
+    close_unsaved,
     abort_op,
     merge,
     rebase,
@@ -115,6 +116,9 @@ pub const Workbench = struct {
     review_menu: ui.Menu = .{},
     indent_menu: ui.Menu = .{},
     bell: bool = false,
+    /// What waits for the tabs asked about to close: the project closing,
+    /// its window, the app quitting.
+    close_then: enum { none, close_project, close_window, quit } = .none,
     /// What a terminal of it asked attention for, out of sight.
     alert_buf: [256]u8 = undefined,
     alert_len: usize = 0,
@@ -349,6 +353,7 @@ pub const Workbench = struct {
         // Keys of keybindings.json first, then the window's own.
         wbeditor.keys(wb, c);
         while (wb.pending.items.len > 0) run_mod.run(wb, c, wb.pending.orderedRemove(0));
+        wbfiles.askUnsaved(wb, c);
         wb.editors.tick(c);
         if (wb.editors.switched) {
             wb.editors.switched = false;

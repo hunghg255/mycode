@@ -633,6 +633,12 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
     ui.spacer(c);
     if (wb.shell.keymap.chord_len > 0) ui.text(c, c.print("({s}) was pressed. Waiting for the next key…", .{wb.shell.keymap.chordText(c)}), .{ .size = 11, .color = t.accent });
     const d = doc orelse return;
+    if (d.disk_gone) {
+        const gone = ui.div(c).row().h(20).px(6).gap(5).itemsCenter();
+        icons.sym(c, "trash", .{ .size = 9.5, .color = t.danger });
+        ui.text(c, "Deleted on disk", .{ .size = 12, .color = t.danger });
+        gone.end();
+    }
     const ta = &d.editor.area;
     const line = ta.caretLine();
     const col = ta.sel.caret - ta.doc.lineStart(line);

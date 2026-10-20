@@ -400,6 +400,7 @@ pub fn confirmed(wb: *Workbench, c: *ui.Context, button: usize) void {
         .checkout_detached => if (button == 1) slow(wb, .checkout, &.{ "checkout", "--detach", arg }, arg),
         .close_project => if (button == 1) wb.shell.closeProjectNow(wb),
         .discard_hunk_closed => {},
+        .close_unsaved => @import("wb_files.zig").unsavedAnswer(wb, button),
         .merge => if (button == 1) slow(wb, .merge, &.{ "merge", "--no-edit", arg }, arg),
         .rebase => if (button == 1) slow(wb, .rebase, &.{ "rebase", arg }, arg),
         .revert => if (button == 1) {

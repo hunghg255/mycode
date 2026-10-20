@@ -514,6 +514,73 @@ pub fn panelRequest(wb: *Workbench, req: panel_mod.Panel.Request) void {
     }
 }
 
+/// Asks about the next tab whose changes closing would lose (Save, Don't
+/// Save, Cancel); once none is left, does what waited for them.
+pub fn askUnsaved(wb: *Workbench, c: *ui.Context) void {
+    if (wb.confirm.open) return;
+    const ed = &wb.editors;
+    // Those closed some other way meanwhile.
+    var i = ed.ask_close.items.len;
+    while (i > 0) {
+        i -= 1;
+        if (ed.locOf(ed.ask_close.items[i]) == null or !ed.needsAsk(ed.ask_close.items[i])) _ = ed.ask_close.orderedRemove(i);
+    }
+    if (ed.ask_close.items.len > 0) {
+        const it = ed.ask_close.items[0];
+        const name = it.title(c);
+        wb.ask(.close_unsaved, "", c.print("Do you want to save the changes you made to {s}?", .{name}), "Your changes will be lost if you don't save them.", &.{ "Save", "Don't Save", "Cancel" });
+        return;
+    }
+    const then = wb.close_then;
+    if (then == .none) return;
+    wb.close_then = .none;
+    c.changed = true;
+    switch (then) {
+        .none => {},
+        .close_project => wb.shell.closeProject(wb),
+        .close_window => wb.shell.tryClose(),
+        .quit => wb.shell.main.quit(),
+    }
+}
+
+/// The answer about the tab asked about: saved and closed, closed
+/// without its changes, or kept open, which stops what waited for it.
+pub fn unsavedAnswer(wb: *Workbench, button: usize) void {
+    const ed = &wb.editors;
+    if (ed.ask_close.items.len == 0) return;
+    const it = ed.ask_close.items[0];
+    if (button >= 2) {
+        ed.ask_close.clearRetainingCapacity();
+        if (wb.close_then == .quit) wb.shell.main.quitting = false;
+        wb.close_then = .none;
+        return;
+    }
+    const l = ed.locOf(it) orelse {
+        _ = ed.ask_close.orderedRemove(0);
+        return;
+    };
+    if (button == 0) switch (it.body) {
+        .file => |d| {
+            if (d.path.len == 0) {
+                saveAs(wb, d);
+                // Not saved (the dialog cancelled): it stays, and so does what waited.
+                if (d.path.len == 0 or d.dirty()) {
+                    ed.ask_close.clearRetainingCapacity();
+                    wb.close_then = .none;
+                    return;
+                }
+            } else d.save() catch |err| {
+                wb.toastError("Couldn't save", @errorName(err));
+                ed.ask_close.clearRetainingCapacity();
+                wb.close_then = .none;
+                return;
+            };
+        },
+        else => {},
+    };
+    ed.closeNow(l, false);
+}
+
 /// Pastes text into the terminal used last, without Enter.
 pub fn sendToTerminal(wb: *Workbench, text: []const u8) void {
     if (wb.panel.current() == null) newTerminal(wb, null);

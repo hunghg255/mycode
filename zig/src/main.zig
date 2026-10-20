@@ -185,6 +185,7 @@ pub const Main = struct {
             .state = myzig.windowState(state_key),
             .on_event = .of(sh, Shell.onWindowEvent),
             .on_drop = .of(sh, Shell.onDrop),
+            .on_close_request = .of(sh, Shell.mayClose),
             .on_close = .{ .ctx = sh, .func = struct {
                 fn f(ctx: *anyopaque, w: *myzig.Window) void {
                     Shell.onClose(@ptrCast(@alignCast(ctx)), w);
@@ -241,9 +242,12 @@ pub const Main = struct {
         } else m.saveState();
     }
 
+    /// Quits once nothing would be lost: auto save saves what it can, and
+    /// each window asks about the rest in turn (as the Go app's `settle`).
     pub fn quit(m: *Main) void {
         m.quitting = true;
-        for (m.shells.items) |sh| for (sh.projects.items) |wb| wb.editors.saveAll();
+        for (m.shells.items) |sh| if (sh.settle(.quit)) return;
+        for (m.shells.items) |sh| for (sh.projects.items) |wb| if (m.store.s.autoSave) wb.editors.saveAll();
         m.saveState();
         m.app.quit();
     }

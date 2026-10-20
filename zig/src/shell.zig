@@ -144,12 +144,42 @@ pub const Shell = struct {
         if (sh.window) |w| w.redraw();
     }
 
+    /// Closes a project, asking first about each change it would lose.
     pub fn closeProject(sh: *Shell, wb: *Workbench) void {
-        if (!sh.store.s.autoSave and wb.editors.anyDirty()) {
-            wb.ask(.close_project, "", "Close the project?", "It has unsaved changes, which are lost.", &.{ "Cancel", "Close" });
+        if (sh.store.s.autoSave) wb.editors.saveAll();
+        if (wb.editors.askAll()) {
+            wb.close_then = .close_project;
+            if (std.mem.indexOfScalar(*Workbench, sh.projects.items, wb)) |i| sh.show(i);
             return;
         }
         sh.closeProjectNow(wb);
+    }
+
+    /// Whether the window may close now: its projects' changes are saved,
+    /// or asked about first (the window closes once they are settled).
+    pub fn mayClose(sh: *Shell, _: *myzig.Window) bool {
+        return !sh.settle(.close_window);
+    }
+
+    /// Closes the window once nothing would be lost (`mayClose`).
+    pub fn tryClose(sh: *Shell) void {
+        if (sh.settle(.close_window)) return;
+        if (sh.window) |w| w.close();
+    }
+
+    /// Saves what auto save saves, then asks about the first project's
+    /// changes that would be lost, `then` waiting for them; true if it asks.
+    pub fn settle(sh: *Shell, then: @FieldType(Workbench, "close_then")) bool {
+        for (sh.projects.items, 0..) |wb, i| {
+            if (sh.store.s.autoSave) wb.editors.saveAll();
+            if (wb.editors.askAll()) {
+                wb.close_then = then;
+                sh.show(i);
+                if (sh.window) |w| w.focus();
+                return true;
+            }
+        }
+        return false;
     }
 
     pub fn closeProjectNow(sh: *Shell, wb: *Workbench) void {

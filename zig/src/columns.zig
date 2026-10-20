@@ -112,6 +112,8 @@ pub const Editors = struct {
     body_rects: [16]ui.Rect = undefined,
     /// The panel as last laid out: a terminal's tab let go there goes to it.
     panel_rect: ?ui.Rect = null,
+    /// Tabs being closed whose changes the user is asked about, in turn.
+    ask_close: std.ArrayList(*Item) = .empty,
     /// Each tab as last laid out, for where a drop between tabs goes.
     tab_rects: std.ArrayList(TabRect) = .empty,
     /// Asked of the workbench by the tab menu.
@@ -138,6 +140,7 @@ pub const Editors = struct {
         e.cols.deinit(e.gpa);
         if (e.reopen_dir) |d| e.gpa.free(d);
         e.tab_rects.deinit(e.gpa);
+        e.ask_close.deinit(e.gpa);
         for (e.closed.items) |c| e.gpa.free(c.path);
         e.closed.deinit(e.gpa);
     }
@@ -296,9 +299,46 @@ pub const Editors = struct {
 
     /// Closes a tab, saving it first when auto save is on, and drops an
     /// empty extra column.
+    /// Whether closing a tab asks about its changes, as the Go app's
+    /// `closeTab`: a file changed, shown in no other tab, that auto save
+    /// doesn't save (it is off, or the file has no path yet).
+    pub fn needsAsk(e: *const Editors, it: *const Item) bool {
+        return switch (it.body) {
+            .file => |d| d.dirty() and d.refs == 1 and !(e.auto_save and d.path.len > 0),
+            else => false,
+        };
+    }
+
+    /// Where an item is, if it is still open.
+    pub fn locOf(e: *const Editors, it: *const Item) ?Loc {
+        for (e.cols.items, 0..) |col, ci| for (col.items.items, 0..) |o, i| if (o == it) return .{ .col = ci, .idx = i };
+        return null;
+    }
+
+    /// Asks about every tab whose changes closing would lose; true if any.
+    pub fn askAll(e: *Editors) bool {
+        for (e.cols.items) |col| for (col.items.items) |it| if (e.needsAsk(it) and std.mem.indexOfScalar(*Item, e.ask_close.items, it) == null) {
+            e.ask_close.append(e.gpa, it) catch {};
+        };
+        return e.ask_close.items.len > 0;
+    }
+
+    /// Closes a tab: one whose changes would be lost waits for the question
+    /// (`ask_close`), the others go, saved first when auto save is on.
     pub fn close(e: *Editors, l: Loc) void {
         const it = e.at(l);
-        if (e.auto_save) saveItem(it);
+        if (e.needsAsk(it)) {
+            if (std.mem.indexOfScalar(*Item, e.ask_close.items, it) == null) e.ask_close.append(e.gpa, it) catch {};
+            return;
+        }
+        e.closeNow(l, e.auto_save);
+    }
+
+    /// Closes a tab without asking, saving it first with `save`.
+    pub fn closeNow(e: *Editors, l: Loc, save: bool) void {
+        const it = e.at(l);
+        if (save) saveItem(it);
+        if (std.mem.indexOfScalar(*Item, e.ask_close.items, it)) |k| _ = e.ask_close.orderedRemove(k);
         const where: ?[]const u8 = switch (it.body) {
             .terminal => |t| t.dir,
             else => it.path(),
