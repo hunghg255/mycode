@@ -114,6 +114,11 @@ needs a `## <version>` section here, or its build fails.
 - The Zig build's **Manage** menu is the Go app's: **Command Palette…** and **Settings** with their keys, **Keyboard
   Shortcuts**, **Theme** (its appearance off under the Matrix), **File Icon Theme**, **Default Terminal Profile**,
   and **Project Tabs** and **Auto Save** with their checks, under a gear with its tooltip.
+- The Zig build's search is the Go app's: the query and the replacement in frames with the **Match Case**, **Match
+  Whole Word**, **Use Regular Expression** and **Replace All** buttons inside, "6 results in 2 files" or "No results
+  found in the files to include and exclude", **Toggle Search Details** with labeled fields, what the view does and
+  its keys before a query, **Refresh**, **Collapse All** and **Clear Search Results** beside its title, and "Replaced
+  4 occurrences in 2 files" once replaced.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

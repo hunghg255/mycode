@@ -337,6 +337,7 @@ fn replaceIn(wb: *Workbench, c: *ui.Context, only: ?usize) void {
     const o = s.options();
     const rep = s.replacement.text();
     var total: usize = 0;
+    var files: usize = 0;
     for (s.results.items, 0..) |r, fi| {
         if (only) |k| if (k != fi) continue;
         const abs = std.fs.path.join(c.alloc(), &.{ wb.root, r.path }) catch continue;
@@ -344,7 +345,10 @@ fn replaceIn(wb: *Workbench, c: *ui.Context, only: ?usize) void {
         if (wb.editors.findDoc(abs)) |d| {
             const text = d.editor.area.text(c.alloc());
             const out = search_mod.replaceAll(c.alloc(), o, text, rep) catch continue;
-            if (out.count > 0) d.editor.area.setText(out.text);
+            if (out.count > 0) {
+                d.editor.area.setText(out.text);
+                files += 1;
+            }
             total += out.count;
         } else {
             const data = fs.read(c.alloc(), wb.io, abs) catch continue;
@@ -355,9 +359,10 @@ fn replaceIn(wb: *Workbench, c: *ui.Context, only: ?usize) void {
             const final = if (crlf) std.mem.replaceOwned(u8, c.alloc(), out.text, "\n", "\r\n") catch continue else out.text;
             fs.write(wb.io, abs, final) catch continue;
             total += out.count;
+            files += 1;
         }
     }
-    _ = wb.toasts.show(c.print("Replaced {d} matches", .{total}));
+    _ = wb.toasts.show(c.print("Replaced {d} occurrence{s} in {d} file{s}", .{ total, if (total == 1) "" else "s", files, if (files == 1) "" else "s" }));
     s.start(wb.shell.store.s.filesExclude, wb.dirtyTexts(c.alloc()));
 }
 

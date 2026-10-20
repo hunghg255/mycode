@@ -27,7 +27,7 @@ fn iconButton(c: *ui.Context, icon: []const u8, tip: []const u8, disabled: bool)
 
 /// An option of finding, as Match Case: shown pressed while on; a click
 /// flips it.
-fn toggle(c: *ui.Context, icon: []const u8, tip: []const u8, on: *bool) void {
+pub fn toggle(c: *ui.Context, icon: []const u8, tip: []const u8, on: *bool) void {
     const t = c.theme;
     const b = ui.div(c).w(22).h(20).center().rounded(4);
     if (on.*) _ = b.bg(t.accent.alpha(0.2)).border(t.accent.alpha(0.6)) else _ = b.hover(t.surface_hover);

@@ -469,6 +469,17 @@ pub const Workbench = struct {
                 ui.text(c, v.label, .{ .size = 11, .weight = .semibold, .color = t.muted });
             };
             ui.spacer(c);
+            if (wb.side == .search and sb_hovered) {
+                const sr = &wb.search;
+                if (panel_mod.tipButton(c, "arrow.clockwise", "Refresh")) sr.start(wb.shell.store.s.filesExclude, wb.dirtyTexts(c.alloc()));
+                var folded = sr.results.items.len > 0;
+                for (sr.results.items) |r| folded = folded and !r.open;
+                if (panel_mod.tipButton(c, "rectangle.on.rectangle", if (folded) "Expand All" else "Collapse All")) @import("search.zig").collapseAll(sr);
+                if (panel_mod.tipButton(c, "xmark", "Clear Search Results")) {
+                    sr.query.clear();
+                    sr.focus_query = true;
+                }
+            }
             // Source control's actions, in a menu: buttons would leave the title no room.
             if (wb.side == .scm and wb.scm.top != null) {
                 const more = ui.div(c).w(26).h(24).center().rounded(5).hover(t.surface_hover);

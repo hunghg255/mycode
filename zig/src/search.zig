@@ -9,6 +9,7 @@ const fs = @import("fs.zig");
 const git = @import("git.zig");
 const glob = @import("glob.zig");
 const jobs = @import("jobs.zig");
+const findwidget = @import("findwidget.zig");
 const icons = @import("icons.zig");
 
 pub const max_matches = 20_000;
@@ -287,6 +288,9 @@ pub const Event = union(enum) {
 };
 
 pub const Search = struct {
+    /// The fields' ids (query, replacement, include, exclude), from the
+    /// last build: their frames show which has the keyboard.
+    ids: [4]u64 = .{ 0, 0, 0, 0 },
     gpa: std.mem.Allocator,
     io: std.Io,
     root: []const u8,
@@ -450,49 +454,108 @@ pub const Search = struct {
         ui.column(c, .{ .width = .fill, .height = .fill });
         defer ui.end(c);
         {
-            ui.column(c, .{ .width = .fill, .padding = .xy(10, 6), .gap = 6 });
+            ui.column(c, .{ .width = .fill, .padding = .{ .top = 0, .right = 12, .bottom = 6, .left = 6 }, .gap = 5 });
             defer ui.end(c);
-            ui.row(c, .{ .width = .fill, .gap = 4, .align_items = .center });
-            const arrow = ui.div(c).w(16).h(24).center().rounded(3).hover(t.surface_hover);
+            ui.row(c, .{ .width = .fill, .gap = 2, .align_items = .stretch });
+            const arrow = ui.div(c).w(18).center().rounded(4).hover(t.surface_hover);
             icons.sym(c, if (s.show_replace) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
-            if (arrow.clicked()) s.show_replace = !s.show_replace;
+            const ai = arrow.interaction();
             arrow.end();
-            const qid = c.peekId(null);
-            if (s.focus_query) {
-                c.focus = qid;
-                c.changed = true;
-                s.focus_query = false;
+            ui.tooltip(c, ai, "Toggle Replace (Ctrl+Shift+H)");
+            if (ai.clicked) s.show_replace = !s.show_replace;
+            ui.column(c, .{ .grow = 1, .gap = 5 });
+            {
+                const frame = field(c, s.ids[0]);
+                const qid = c.peekId(null);
+                s.ids[0] = qid;
+                if (s.focus_query) {
+                    c.focus = qid;
+                    c.changed = true;
+                    s.focus_query = false;
+                }
+                // Down from the query goes through the matches; Up on the first,
+                // or Escape, back to the query.
+                if (c.focus == qid) if (s.matchKeys(c)) |e| {
+                    ev = e;
+                };
+                _ = ui.textField(c, &s.query, .{ .width = .fill, .placeholder = "Search", .size = 12.5, .bare = true, .label = "Search" });
+                findwidget.toggle(c, "case", "Match Case", &s.case);
+                findwidget.toggle(c, "word", "Match Whole Word", &s.word);
+                findwidget.toggle(c, "regex", "Use Regular Expression", &s.regex);
+                frame.end();
             }
-            // Down from the query goes through the matches; Up on the first,
-            // or Escape, back to the query.
-            if (c.focus == qid) if (s.matchKeys(c)) |e| {
-                ev = e;
-            };
-            _ = ui.textField(c, &s.query, .{ .width = .fill, .placeholder = "Search", .size = 13 });
-            toggle(c, "Aa", &s.case);
-            toggle(c, "ab", &s.word);
-            toggle(c, ".*", &s.regex);
-            ui.end(c);
             if (s.show_replace) {
-                ui.row(c, .{ .width = .fill, .gap = 4, .align_items = .center, .padding = .{ .left = 20 } });
-                _ = ui.textField(c, &s.replacement, .{ .width = .fill, .placeholder = "Replace", .size = 13 });
-                if (ui.button(c, "Replace All", .{ .variant = .ghost, .size = 11 }).clicked and s.total > 0) s.confirm.show();
-                ui.end(c);
+                const frame = field(c, s.ids[1]);
+                s.ids[1] = c.peekId(null);
+                const r = ui.textField(c, &s.replacement, .{ .width = .fill, .placeholder = "Replace", .size = 12.5, .bare = true, .label = "Replace" });
+                const rb = ui.div(c).w(22).h(20).center().rounded(4).hover(t.surface_hover);
+                icons.sym(c, "replace_all", .{ .size = 11, .color = t.muted });
+                const rbi = rb.interaction();
+                rb.end();
+                ui.tooltip(c, rbi, "Replace All");
+                if ((rbi.clicked or r.submitted) and s.total > 0) s.confirm.show();
+                frame.end();
             }
-            ui.row(c, .{ .width = .fill, .gap = 6, .align_items = .center });
-            const status = if (s.running) "Searching…" else if (s.query.text().len == 0) "" else if (s.total == 0) "No results" else c.print("{d} results in {d} files{s}", .{ s.total, s.results.items.len, if (s.total >= max_matches) " (stopped)" else "" });
-            ui.text(c, status, .{ .size = 11, .color = t.muted });
-            ui.spacer(c);
-            if (ui.button(c, "⋯", .{ .variant = .ghost, .size = 11 }).clicked) s.show_filters = !s.show_filters;
-            if (ui.button(c, "Collapse All", .{ .variant = .ghost, .size = 11 }).clicked) for (s.results.items) |*r| {
-                r.open = false;
-            };
+            ui.end(c);
+            ui.end(c);
+            // What the search found, and the details' button.
+            ui.row(c, .{ .width = .fill, .gap = 6, .align_items = .center, .padding = .{ .left = 20 } });
+            const files = s.results.items.len;
+            const filtered = s.include.text().len > 0 or s.exclude.text().len > 0;
+            const status = if (s.message) |m|
+                m
+            else if (s.query.text().len == 0)
+                ""
+            else if (s.total > 0)
+                (if (s.total >= max_matches)
+                    c.print("The first {d} results in {d} file{s}{s}", .{ max_matches, files, if (files == 1) "" else "s", if (s.running) "…" else "" })
+                else
+                    c.print("{d} result{s} in {d} file{s}{s}", .{ s.total, if (s.total == 1) "" else "s", files, if (files == 1) "" else "s", if (s.running) "…" else "" }))
+            else if (s.running)
+                "Searching…"
+            else if (filtered)
+                "No results found in the files to include and exclude"
+            else
+                "No results found";
+            const sb = ui.div(c).grow().w(0).clip();
+            ui.text(c, status, .{ .size = 11.5, .color = if (s.message != null) t.danger else t.muted });
+            sb.end();
+            const db = ui.div(c).w(22).h(18).center().rounded(4).bg(if (s.show_filters) t.accent.alpha(0.18) else .transparent).hover(t.surface_hover);
+            icons.sym(c, "ellipsis", .{ .size = 10, .color = t.muted });
+            const dbi = db.interaction();
+            db.end();
+            ui.tooltip(c, dbi, "Toggle Search Details");
+            if (dbi.clicked) s.show_filters = !s.show_filters;
             ui.end(c);
             if (s.show_filters) {
-                _ = ui.textField(c, &s.include, .{ .width = .fill, .placeholder = "files to include (e.g. *.go, web/**)", .size = 12 });
-                _ = ui.textField(c, &s.exclude, .{ .width = .fill, .placeholder = "files to exclude", .size = 12 });
+                ui.column(c, .{ .width = .fill, .gap = 4, .padding = .{ .left = 20 } });
+                ui.text(c, "files to include", .{ .size = 11, .color = t.muted });
+                const f1 = field(c, s.ids[2]);
+                s.ids[2] = c.peekId(null);
+                _ = ui.textField(c, &s.include, .{ .width = .fill, .placeholder = "e.g. *.go, src/**", .size = 12.5, .bare = true, .label = "files to include" });
+                f1.end();
+                ui.text(c, "files to exclude", .{ .size = 11, .color = t.muted });
+                const f2 = field(c, s.ids[3]);
+                s.ids[3] = c.peekId(null);
+                _ = ui.textField(c, &s.exclude, .{ .width = .fill, .placeholder = "e.g. *.test.ts, testdata", .size = 12.5, .bare = true, .label = "files to exclude" });
+                f2.end();
+                ui.end(c);
             }
-            if (s.message) |m| ui.text(c, m, .{ .size = 11, .color = t.danger, .wrap = true });
+        }
+        // Before a query: what the view does, and its keys.
+        if (s.query.text().len == 0) {
+            ui.column(c, .{ .width = .fill, .padding = .{ .top = 10, .right = 14, .bottom = 0, .left = 26 }, .gap = 6 });
+            ui.text(c, "Find text in the folder's files.", .{ .size = 12, .color = t.muted });
+            const keys = [_][2][]const u8{ .{ "↓", "Go to the results" }, .{ "⏎", "Open the match" }, .{ "Ctrl+Shift+H", "Replace" } };
+            for (keys) |k| {
+                const row = ui.div(c).row().gap(8).itemsCenter();
+                const cap = ui.div(c).h(18).minW(22).px(5).center().rounded(4).bg(t.surface_hover);
+                ui.text(c, k[0], .{ .size = 11, .color = t.muted });
+                cap.end();
+                ui.text(c, k[1], .{ .size = 11.5, .color = t.muted.alpha(0.7) });
+                row.end();
+            }
+            ui.end(c);
         }
         if (s.running) _ = c.leaf(.{ .width = .fill, .height = .{ .px = 2 }, .background = t.accent.alpha(0.6) }, .none, null);
         // A regular expression's groups, for the replacements shown.
@@ -583,8 +646,19 @@ pub const Search = struct {
     }
 };
 
-fn toggle(c: *ui.Context, label: []const u8, on: *bool) void {
-    if (ui.button(c, label, .{ .variant = if (on.*) .secondary else .ghost, .size = 11 }).clicked) on.* = !on.*;
+/// A field of the view in its frame, its border in the accent while the
+/// field `id` has the keyboard.
+fn field(c: *ui.Context, id: u64) ui.Div {
+    const t = c.theme;
+    const focused = c.focus == id and id != 0;
+    return ui.div(c).row().wFull().h(26).pl(8).pr(4).gap(2).itemsCenter().rounded(5).bg(t.background).border(if (focused) t.accent.alpha(0.7) else t.border);
+}
+
+/// Folds every file's matches, or opens them all again.
+pub fn collapseAll(s: *Search) void {
+    var all = s.results.items.len > 0;
+    for (s.results.items) |r| all = all and !r.open;
+    for (s.results.items) |*r| r.open = all;
 }
 
 test matchLine {
