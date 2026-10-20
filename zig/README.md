@@ -12,9 +12,16 @@ It needs Zig 0.17 and a checkout of myzig two folders up (`../../myzig`), with i
 ```sh
 zig build                       # zig-out/bin/mycode.exe
 zig build test                  # unit tests
+zig build uitest                # UI tests: the app run headless with scripts (uitest/main.zig)
+zig build uitest -- search      # the UI tests whose names hold "search"
 zig build -Doptimize=ReleaseSafe -Dwindows-gui=true   # zig-out/bin/mycode.exe, as the installer has it
 zig-out/bin/mycode.exe <folder> --myzig-snapshot=shot.png --myzig-script="click:README.md"   # headless
 ```
+
+The UI tests make their folders in `%TEMP%\mycode-uitest`, each case with its own settings, and run the app with
+`--myzig-snapshot` and a script: a step that finds no text fails, so `move:TEXT` checks a text is shown. Some cases then
+check what the app wrote: a saved file, a commit, its state. Headless runs leave the `mycode` command and File
+Explorer's menus alone.
 
 The terminal downloads libghostty-vt and ConPTY into the user's cache the first time it opens, unless they are
 beside the executable: `resources/` holds them for the installer (`ghostty-vt.dll`, `conpty.dll`,

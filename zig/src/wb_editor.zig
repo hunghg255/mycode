@@ -225,6 +225,11 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
             }
             fileBody(wb, c, d, chrome);
             it.area_id = d.editor.area.id;
+            if (ed.focus_editor > 0 and ci == ed.focus) {
+                ed.focus_editor -= 1;
+                if (c.focus != it.area_id) c.changed = true;
+                c.focus = it.area_id;
+            }
             if (d.refs > 1) {
                 it.sel = d.editor.area.sel;
                 it.rendered = d.rendered;
@@ -284,7 +289,7 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
     const s = sh.store.s;
     d.updateMarks(wb.scm.top);
     d.updateConflicts();
-    const rel = c.print("{s}", .{if (d.path.len == 0) "Untitled" else fs.relative(wb.root, d.path)});
+    const rel = c.print("{s}", .{if (d.path.len == 0) d.name() else fs.relative(wb.root, d.path)});
     std.mem.replaceScalar(u8, @constCast(rel), '\\', '/');
     d.comment_lines = wb.review.ranges(c.alloc(), rel);
     if (wb.review.list.items.len > 0 and d.editor.area.doc.version != d.seen) {

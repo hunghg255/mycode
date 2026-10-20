@@ -141,6 +141,8 @@ needs a `## <version>` section here, or its build fails.
   Open**, a button to open one and the recent folders, as the Go app's.
 - Fixed in the Zig build: with **Project Tabs** off, opening a recent folder from the welcome page no longer quits
   the app, nor does turning **Project Tabs** off with several projects open.
+- In the Zig build, a file opened from **Quick Open**, search results or **New File** takes the keyboard, as in the Go
+  app, and new files are numbered: **Untitled-1**, **Untitled-2**.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

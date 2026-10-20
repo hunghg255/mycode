@@ -33,6 +33,9 @@ pub const Doc = struct {
     io: std.Io,
     /// Absolute; empty for an untitled file.
     path: []u8,
+    /// An untitled file's name, numbered: Untitled-1, Untitled-2.
+    untitled_buf: [24]u8 = undefined,
+    untitled_len: u8 = 0,
     editor: ui.CodeEditor,
     /// The document's version when last saved or read.
     saved: u64 = 0,
@@ -138,7 +141,8 @@ pub const Doc = struct {
     }
 
     pub fn name(d: *const Doc) []const u8 {
-        return if (d.path.len == 0) "Untitled" else std.fs.path.basename(d.path);
+        if (d.path.len > 0) return std.fs.path.basename(d.path);
+        return if (d.untitled_len > 0) d.untitled_buf[0..d.untitled_len] else "Untitled";
     }
 
     pub fn dirty(d: *const Doc) bool {

@@ -108,6 +108,11 @@ pub const Editors = struct {
     switched: bool = true,
     menu: ui.Menu = .{},
     menu_at: Loc = .{ .col = 0, .idx = 0 },
+    /// The untitled files made, which number the next.
+    untitled: u32 = 0,
+    /// Frames the focused column's file takes the keyboard for: a file
+    /// opened to edit (not a preview) has it, as in the Go app.
+    focus_editor: u8 = 0,
     drag: ?Drag = null,
     /// Each column's strip and body as last laid out, for drops.
     strip_rects: [16]ui.Rect = undefined,
@@ -259,6 +264,7 @@ pub const Editors = struct {
         if (e.findPath(p)) |l| {
             const it = e.at(l);
             if (!preview) it.preview = false;
+            if (!preview) e.focus_editor = 3;
             e.show(l);
             return it;
         }
@@ -269,12 +275,17 @@ pub const Editors = struct {
         const it = try e.newItem(body, preview);
         errdefer it.destroy(e.gpa);
         _ = try e.add(it, e.fileColumn());
+        if (!preview) e.focus_editor = 3;
         return it;
     }
 
     pub fn newUntitled(e: *Editors) !void {
-        const it = try e.newItem(.{ .file = try Doc.create(e.gpa, e.io, "") }, false);
+        const d = try Doc.create(e.gpa, e.io, "");
+        e.untitled += 1;
+        d.untitled_len = @intCast((std.fmt.bufPrint(&d.untitled_buf, "Untitled-{d}", .{e.untitled}) catch unreachable).len);
+        const it = try e.newItem(.{ .file = d }, false);
         _ = try e.add(it, e.fileColumn());
+        e.focus_editor = 3;
     }
 
     fn saveItem(it: *Item) void {

@@ -41,4 +41,16 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{ .root_module = root });
     b.step("test", "Run the app's tests").dependOn(&b.addRunArtifact(tests).step);
+
+    // The UI tests: the app run headless with scripts (uitest/main.zig);
+    // `zig build uitest -- NAME` runs the cases whose names hold NAME.
+    const uitest = b.addExecutable(.{ .name = "uitest", .root_module = b.createModule(.{
+        .root_source_file = b.path("uitest/main.zig"),
+        .target = b.graph.host,
+    }) });
+    const run_ui = b.addRunArtifact(uitest);
+    run_ui.addArtifactArg(exe);
+    run_ui.addPassthruArgs();
+    run_ui.has_side_effects = true;
+    b.step("uitest", "Run the app headless through its UI tests").dependOn(&run_ui.step);
 }
