@@ -84,6 +84,9 @@ needs a `## <version>` section here, or its build fails.
   profile and the default one (**Terminal: New Terminal: Git Bash**), symbols nested as in the file until a name
   is typed, `:42:7` for a line and a column, what to type when nothing matches, and a footer with its keys and
   prefixes.
+- In the Zig build, Ctrl+clicking a path in a terminal finds it from where the shell is now, then where it
+  started, then the project; goes to its column too (`main.zig:12:5`); takes Git Bash's `/c/...`, WSL's
+  `/mnt/c/...`, `~/` and `file://` links; and leaves out the punctuation that ends a sentence.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

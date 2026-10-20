@@ -425,6 +425,7 @@ test {
     _ = @import("doc.zig");
     _ = @import("viewer.zig");
     _ = @import("worktree.zig");
+    _ = @import("termlinks.zig");
     _ = @import("updates.zig");
     _ = commands;
     _ = menubar;

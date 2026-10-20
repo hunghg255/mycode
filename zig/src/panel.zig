@@ -13,7 +13,9 @@ const Profile = @import("termprofiles.zig").Profile;
 pub const Host = struct {
     window: ?*myzig.Window = null,
     ctx: *anyopaque,
-    open_link: *const fn (ctx: *anyopaque, link: []const u8, path: bool) bool,
+    /// Opens a link clicked in a terminal; `dirs` are where a relative
+    /// path may be from: where the shell is now, where it started.
+    open_link: *const fn (ctx: *anyopaque, link: []const u8, path: bool, dirs: []const []const u8) bool,
     /// The libraries are downloaded once into the user's cache, off the main
     /// thread: 0 while, 1 done, 2 failed.
     ready: std.atomic.Value(u8) = .init(0),
@@ -191,7 +193,23 @@ pub const Term = struct {
 
     fn openLink(ctx: ?*anyopaque, link: []const u8, path: bool) bool {
         const term: *Term = @ptrCast(@alignCast(ctx.?));
-        return term.host.open_link(term.host.ctx, link, path);
+        // Where the shell is now (OSC 7), as a file URL or a path.
+        var buf: [1024]u8 = undefined;
+        var n: usize = 0;
+        {
+            const t = term.t;
+            t.lock.lockUncancelable(t.io);
+            defer t.lock.unlock(t.io);
+            const pwd = t.vt.pwd();
+            n = @min(pwd.len, buf.len);
+            @memcpy(buf[0..n], pwd[0..n]);
+        }
+        var now: []const u8 = buf[0..n];
+        if (std.mem.startsWith(u8, now, "file://")) {
+            const rest = now["file://".len..];
+            now = if (std.mem.indexOfScalar(u8, rest, '/')) |s| rest[s..] else "";
+        }
+        return term.host.open_link(term.host.ctx, link, path, &.{ now, term.dir });
     }
 
     pub fn view(term: *Term, c: *ui.Context) void {

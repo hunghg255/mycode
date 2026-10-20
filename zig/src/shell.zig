@@ -4,6 +4,7 @@
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
+const termlinks = @import("termlinks.zig");
 const fs = @import("fs.zig");
 const commands = @import("commands.zig");
 const Cmd = commands.Cmd;
@@ -262,35 +263,51 @@ pub const Shell = struct {
         return out.items;
     }
 
-    fn openLink(ctx: *anyopaque, link: []const u8, is_path: bool) bool {
+    /// Opens what a Ctrl+click on a terminal's link names, as the Go app's
+    /// `openTermLink`: a file at its line and column, or a folder of the
+    /// project in the Explorer; false leaves a URL to the browser.
+    fn openLink(ctx: *anyopaque, link: []const u8, is_path: bool, dirs: []const []const u8) bool {
         const sh: *Shell = @ptrCast(@alignCast(ctx));
-        if (!is_path) return false;
         const wb = sh.active() orelse return false;
-        // path:line:col
-        var path = link;
-        var line: usize = 0;
-        var parts = std.mem.splitBackwardsScalar(u8, link, ':');
-        var nums: [2]usize = .{ 0, 0 };
-        var n: usize = 0;
-        while (parts.next()) |p| {
-            const v = std.fmt.parseInt(usize, p, 10) catch break;
-            if (n < 2) nums[n] = v;
-            n += 1;
-            path = link[0 .. @intFromPtr(p.ptr) - @intFromPtr(link.ptr) -| 1];
+        const home = sh.main.env.get("USERPROFILE") orelse sh.main.env.get("HOME") orelse "";
+        var buf: [4096]u8 = undefined;
+        const target = termlinks.target(link, is_path, home, &buf) orelse return false;
+        // A relative path is the program's, as of where the shell is now,
+        // or else where it started, or the project.
+        var abs: ?[]u8 = null;
+        defer if (abs) |a| sh.gpa.free(a);
+        if (std.fs.path.isAbsolute(target.path)) {
+            abs = sh.gpa.dupe(u8, target.path) catch return false;
+            if (!fs.exists(sh.io, abs.?)) return false;
+        } else for ([_][]const u8{ if (dirs.len > 0) dirs[0] else "", if (dirs.len > 1) dirs[1] else "", wb.root }) |dir| {
+            if (dir.len == 0) continue;
+            const p = std.fs.path.join(sh.gpa, &.{ dir, target.path }) catch continue;
+            if (fs.exists(sh.io, p)) {
+                abs = p;
+                break;
+            }
+            sh.gpa.free(p);
         }
-        if (n > 0) line = nums[n - 1];
-        const abs = if (std.fs.path.isAbsolute(path)) sh.gpa.dupe(u8, path) catch return false else std.fs.path.join(sh.gpa, &.{ wb.root, path }) catch return false;
-        defer sh.gpa.free(abs);
-        if (fs.isDirectory(sh.io, abs)) {
+        const path = abs orelse return false;
+        const line = target.line;
+        if (fs.isDirectory(sh.io, path)) {
+            if (fs.relative(wb.root, path).ptr == path.ptr) return false;
+            const abs_dir = path;
             wb.sidebar_open = true;
             wb.side = .explorer;
-            wb.explorer.reveal(abs);
+            wb.explorer.reveal(abs_dir);
             return true;
         }
-        if (!fs.exists(sh.io, abs)) return false;
-        const it = wb.editors.openFile(abs, false) catch return false;
+        const it = wb.editors.openFile(path, false) catch return false;
         switch (it.body) {
-            .file => |d| if (line > 0) d.editor.goToLine(line),
+            .file => |d| if (line > 0) {
+                d.editor.goToLine(line);
+                if (target.col > 1) {
+                    const ta = &d.editor.area;
+                    const l = ta.caretLine();
+                    ta.collapse(@min(ta.doc.lineStart(l) + target.col - 1, ta.lineRange(l)[1]));
+                }
+            },
             else => {},
         }
         if (sh.window) |w| w.redraw();
