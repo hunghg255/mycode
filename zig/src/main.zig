@@ -421,4 +421,5 @@ test {
     _ = @import("minimap.zig");
     _ = @import("tabdrag.zig");
     _ = @import("scmtree.zig");
+    _ = @import("checks.zig");
 }

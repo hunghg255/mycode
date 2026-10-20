@@ -13,6 +13,15 @@ const wbfiles = @import("wb_files.zig");
 
 pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
     c.changed = true;
+    // Zoom zooms the picture shown, else the text.
+    if (cmd == .zoom_in or cmd == .zoom_out or cmd == .zoom_reset) if (wb.editors.current()) |it| if (it.body == .image) {
+        it.body.image.zoomStep(switch (cmd) {
+            .zoom_in => 1,
+            .zoom_out => -1,
+            else => 0,
+        });
+        return;
+    };
     if (wb.shell.run(c, cmd)) return;
     const ed = &wb.editors;
     const doc = ed.currentDoc();
