@@ -5,7 +5,10 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
-- MyCode written in Zig on myzig, in `zig/` (see `zig/README.md`): the Explorer, editor columns and tabs, quick
+- MyCode is now the Zig app alone: the Go app is gone, and the Zig sources, its build and its installer are at the
+  top of the repository. The README, CONTRIBUTING, the architecture tour and the site describe building it with
+  Zig and myzig.
+- MyCode written in Zig on myzig: the Explorer, editor columns and tabs, quick
   open and the command palette, search and replace, source control with the Changes tab, hunk staging, branches,
   stash, the commits graph, conflicts and review comments, terminals with profiles, project tabs, themes, and
   settings and keybindings read from the Go app's files.

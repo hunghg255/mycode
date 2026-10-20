@@ -1,0 +1,19 @@
+.{
+    .name = .mycode,
+    .version = "0.9.1",
+    .fingerprint = 0xa73bd01d02fa39e1,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .myzig = .{ .path = "../myzig" },
+        .myzig_terminal = .{ .path = "../myzig/plugins/terminal" },
+        .myzig_watch = .{ .path = "../myzig/plugins/watch" },
+        .mainthread = .{ .path = "../myzig/plugins/mainthread" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "resources",
+        "icons",
+    },
+}

@@ -97,10 +97,10 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <img className="hero-icon" src={icon} alt="MyCode icon" width={96} height={96} />
-          <h1>A small, fast code editor written in Go</h1>
+          <h1>A small, fast code editor written in Zig</h1>
           <p className="tagline">
-            MyCode draws a native UI on the GPU with <a href="https://github.com/egoist/mygo">MyGo</a>. No webview, no
-            Electron, and the packaged app is about 18 MB.
+            MyCode draws a native UI on the GPU with <a href="https://github.com/hunghg255/myzig">myzig</a>. No webview, no
+            Electron, and the installer is about 4 MB.
           </p>
           <div className="cta">
             <a className="button primary" href="#start">
@@ -112,20 +112,20 @@ export default function App() {
           </div>
           <ul className="facts">
             <li>
-              <b>~18 MB</b> packaged app
+              <b>~4 MB</b> installer
             </li>
             <li>
               <b>GPU</b> native rendering
             </li>
             <li>
-              <b>macOS · Linux · Windows</b>
+              <b>Windows</b>
             </li>
             <li>
               <b>{count}+</b> features
             </li>
           </ul>
           <button className="hero-shot" onClick={() => setShot({ src: hero, alt: 'MyCode', caption: 'MyCode' })}>
-            <img src={hero} alt="MyCode with two columns of Go source" />
+            <img src={hero} alt="MyCode with two columns of source" />
           </button>
         </section>
 
@@ -205,28 +205,32 @@ export default function App() {
           <div className="steps">
             <div>
               <h4>1. Requirements</h4>
-              <p>macOS 13 or later and Go 1.27 or later. MyCode also builds for Linux and Windows.</p>
+              <p>
+                Windows 10 or later. To build it: Zig 0.17 and a checkout of{' '}
+                <a href="https://github.com/hunghg255/myzig">myzig</a> beside it.
+              </p>
             </div>
             <div>
               <h4>2. Run from source</h4>
               <pre>
-                <code>{`git clone ${repo}
+                <code>{`git clone https://github.com/hunghg255/myzig
+git clone ${repo}
 cd mycode
-go run ./cmd/mayoi ~/some/project`}</code>
+zig build run -- ~/some/project`}</code>
               </pre>
             </div>
             <div>
               <h4>3. Build the app</h4>
               <pre>
-                <code>{`go tool mygo build
-# build/darwin-arm64/MyCode.app and a .dmg`}</code>
+                <code>{`../myzig/cli/zig-out/bin/myzig build --optimize safe
+# dist/windows-x86_64: MyCode Setup <version> x86_64.exe`}</code>
               </pre>
             </div>
             <div>
               <h4>4. Open from a shell</h4>
               <p>
-                Choose <b>File → Install 'mycode' Command</b> on macOS, then run <code>mycode .</code> or{' '}
-                <code>mycode &lt;file&gt;</code>. On Windows the installed app sets it up by itself.
+                The installed app adds <code>mycode</code> to your <code>PATH</code> and <b>Open with MyCode</b> to
+                File Explorer's menu by itself. Run <code>mycode .</code> or <code>mycode &lt;file&gt;</code>.
               </p>
             </div>
           </div>

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Sets a new version in mygo.json, commits it as v<version> with a tag of the
-# same name, and after asking pushes main and the tag, which makes the
-# Release workflow build and publish it.
+# Sets a new version in build.zig.zon, commits it as v<version> with a tag of
+# the same name, and after asking pushes main and the tag, builds the
+# installer with the myzig CLI (../myzig) and publishes it as the GitHub
+# release, which installed apps update to.
 # Usage: scripts/bump.sh <version | patch | minor | major>
 #
 # The "## Unreleased" section of CHANGELOG.md becomes "## <version>" in the
 # same commit, unless a "## <version>" section is there already: the update
 # window shows it, it is the notes of the GitHub release, and the release
 # fails without it. Pre-release versions such as 1.2.0-beta.1 are refused,
-# as Mayoi has no beta channel yet.
+# as MyCode has no beta channel yet.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,10 +19,11 @@ if [ $# -ne 1 ]; then
 fi
 
 cd "$ROOT"
-CURRENT="$(/usr/bin/python3 -c 'import json; print(json.load(open("mygo.json"))["version"])')"
+PY="$(for p in python python3; do "$p" -c "" 2>/dev/null && { command -v "$p"; break; }; done)"
+CURRENT="$("$PY" -c 'import re; print(re.search(r"\.version = \"([^\"]+)\"", open("build.zig.zon").read()).group(1))')"
 # Prints the new version, or fails when the argument isn't a version or
 # keyword or doesn't come after the current version.
-VERSION="$(/usr/bin/python3 - "$CURRENT" "$1" <<'PY'
+VERSION="$("$PY" - "$CURRENT" "$1" <<'PY'
 import re, sys
 
 def parse(v):
@@ -68,7 +70,7 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 fi
 if grep -q "^## $VERSION\$" CHANGELOG.md; then
     RENAME_UNRELEASED=
-elif /usr/bin/python3 - <<'PY'
+elif "$PY" - <<'PY'
 import re, sys
 text = open("CHANGELOG.md").read()
 m = re.search(r"^## Unreleased\n(.*?)(?=^## |\Z)", text, re.M | re.S)
@@ -82,18 +84,17 @@ else
 fi
 
 echo "==> $CURRENT -> $VERSION"
-/usr/bin/python3 - "$VERSION" <<'PY'
-import json, sys
-with open("mygo.json") as f:
-    config = json.load(f)
-config["version"] = sys.argv[1]
-with open("mygo.json", "w") as f:
-    json.dump(config, f, indent=2, ensure_ascii=False)
-    f.write("\n")
+"$PY" - "$VERSION" <<'PY'
+import re, sys
+with open("build.zig.zon", newline="") as f:
+    text = f.read()
+text = re.sub(r'\.version = "[^"]+"', '.version = "%s"' % sys.argv[1], text, count=1)
+with open("build.zig.zon", "w", newline="") as f:
+    f.write(text)
 PY
-FILES=mygo.json
+FILES=build.zig.zon
 if [ -n "$RENAME_UNRELEASED" ]; then
-    /usr/bin/python3 - "$VERSION" <<'PY'
+    "$PY" - "$VERSION" <<'PY'
 import re, sys
 with open("CHANGELOG.md") as f:
     text = f.read()
@@ -101,10 +102,10 @@ text = re.sub(r"^## Unreleased$", "## " + sys.argv[1], text, count=1, flags=re.M
 with open("CHANGELOG.md", "w") as f:
     f.write(text)
 PY
-    FILES="CHANGELOG.md mygo.json"
+    FILES="CHANGELOG.md build.zig.zon"
 fi
 if [ "$(git diff --name-only | tr '\n' ' ')" != "$FILES " ] \
-    || [ "$(git diff -U0 mygo.json | grep -c '^[-+] ')" != 2 ] \
+    || [ "$(git diff -U0 build.zig.zon | grep -c '^[-+] ')" != 2 ] \
     || { [ -n "$RENAME_UNRELEASED" ] && [ "$(git diff -U0 CHANGELOG.md | grep -c '^[-+]#')" != 2 ]; }; then
     echo "Expected only the version in $FILES to change:" >&2
     git diff >&2
@@ -126,4 +127,10 @@ if [[ "$answer" != [yY]* ]]; then
     exit 0
 fi
 git push --quiet --atomic origin main "$TAG"
-echo "==> pushed $TAG. The Release workflow: https://github.com/sorrycc/Mayoi/actions/workflows/release.yml"
+echo "==> pushed $TAG; building the installer"
+../myzig/cli/zig-out/bin/myzig build --optimize safe
+SETUP="dist/windows-x86_64/MyCode Setup $VERSION x86_64.exe"
+ZIP="dist/windows-x86_64/MyCode Portable $VERSION x86_64.zip"
+scripts/release-notes.sh "$VERSION" > dist/notes.md
+gh release create "$TAG" "$SETUP" "$ZIP" --title "MyCode $VERSION" --notes-file dist/notes.md
+echo "==> published $TAG"

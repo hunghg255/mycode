@@ -1,205 +1,291 @@
 # Architecture
 
-MyCode is a single Go package (`main`) with three internal packages, drawn by [MyGo](https://github.com/egoist/mygo).
-Chroma highlights code on a background goroutine, libghostty-vt runs the terminal, and fsnotify keeps the file tree and
-the quick-open index current. Undo history, editing commands and decorations belong to the app rather than the text
-area, so every column showing a file shares its text and history. This page walks through the source by area.
+MyCode is a single Zig module, `src/`, with `src/main.zig` as its entry, drawn on the GPU by
+[myzig](https://github.com/hunghg255/myzig), which `build.zig.zon` takes from a checkout beside this one (`../myzig`).
+myzig's terminal plugin runs the terminals with Ghostty's emulator (ConPTY on Windows), its watch plugin follows the
+folder on disk, and its mainthread plugin carries the results of background threads back to the main thread. Git runs
+through its command line. This page walks through the source by area.
 
-## Windows and commands
+## Building
 
-**`main.go`, `cli.go`.** These manage the windows. Folders and files reach the app in two ways. The `mycode` script hands
-them to `open` with the app's identifier, and a second MyCode started with paths passes them on and exits. Each folder
-goes to the window that already has it, or to a new one. A file goes to the window whose folder contains it.
+`build.zig` makes the `mycode` executable from `src/main.zig`, with myzig and its `terminal`, `watch` and `mainthread`
+plugins as imports. It adds the Material icons (`icons/material.zig`), the version from `build.zig.zon` as
+`build_options.version` (for updates) and `resources/icon.png` for the welcome page. `zig build run` starts the app,
+`zig build test` runs the unit tests and `zig build uitest` the UI tests. `myzig.zon` is for the myzig CLI: `myzig build`
+packages the app with its icon and the NSIS installer, whose uninstaller runs `mycode --uninstall-shell` and offers to
+delete the settings.
 
-**`projects.go`.** A `frame` is a native window, and a `desktop` a project in it, with its own `app`. A window
-holds one project, or with project tabs every one, which a rail on its left chooses among. Only the project shown is
-built. The others run what is posted to them as the window draws, and as one goes out of sight its editors note where
-they were scrolled, as a hidden tab's do, since their text areas are built anew when it shows again. Each project's
-elements are keyed by its window's ID, so that its tabs, numbered as another's are, never take another's state.
-Turning project tabs on moves the apps into the window in front, and off gives each a window of its own again.
+The terminal's native libraries (libghostty-vt, and on Windows `conpty.dll` with `OpenConsole.exe`) are found next to the
+executable, where `resources/` puts them for the installer (they are not committed), or else in the user's cache, where
+`panel.zig`'s `Host.prepare` downloads them once on a thread of its own.
 
-**`app.go`, `commands.go`.** These hold state and commands. Each project has its own `app`, and the windows share the
-settings and the menu bar. A menu item runs the command of the window it was chosen in. Menus, accelerators and tests
-all run the same commands. The menu bar is built anew when a window comes to the front or the recent folders change, so
-that **Open Recent** leaves out the front window's folder.
+## myzig in brief
 
-**`internal/settings`.** The settings are two JSON files that the app writes a moment after each change: the preferences
-a person chooses in `settings.json`, and the windows, tabs, recent folders and layout in `state.json` beside it. It
-watches the folder too, and when the file changes into something it did not write, it reads the preferences from it
-(`Prefs`, which the settings embed) and `main.go` applies them on the main thread, in every window. The windows and the
-layout stay as the app has them. Each frame, a window checks the code's font and the terminals' against the settings and
-measures them anew when they differ.
+A contributor needs a few of myzig's rules in mind.
 
-**`internal/keymap`, `keymap.go`.** `keybindings.json` is read in VS Code's format, comments and all, and watched as the
-settings are. Every place that takes keys itself, the editor, the terminal (`OnKey`), the Explorer, diffs, pictures and
-text fields, asks the keymap first with `takeKeys`, as the key comes, so that a chord's next key never types. Where the
-keyboard is in none of them, the window registers the keys of the file as its shortcuts. A binding's command runs with
-the next frame, by MyCode's id or VS Code's name, and `runCommands` steps through its commands one frame at a time, until
-the edits and Git commands before each are done.
+- **Views are immediate mode.** A window's view function builds the whole frame again each time it is drawn. There are no
+  widget objects: `ui.button` returns whether it was clicked, and the app's own structs hold the state. A frame is drawn
+  on input, on a resize, while an animation runs, or when asked (`Window.redraw`, `c.frameIn`), so an idle window costs
+  nothing. Code that changes state during the frame sets `c.changed`, and the frame is built again before it is drawn.
+- **The frame is laid out after the view returns.** Widgets answer from the last frame's layout: a press is matched to
+  the box that was under the pointer then.
+- **Ids are positional.** A box's id comes from its parent and its place among its siblings, and text areas, scroll
+  positions and carets are kept by id. A box that comes and goes conditionally shifts the ids of every box after it, so
+  a press can land on nothing. Key a box that moves with `c.keyed(ptr)` (a pointer keys the object it points to), as
+  `Shell.view` keys each project, the rail its squares, and `wb_editor.zig` each tab's body.
+- **Strings must outlive the frame.** `ui.text` and the other widgets keep the slices they are given until the frame is
+  laid out and drawn, after the view returns. Pass the app's own memory, constants, or the frame's arena:
+  `c.print("{d} files", .{n})` formats into it and `c.alloc()` hands it out. Never pass a buffer on the view's stack.
+  The same rule is why closed projects are freed only as the next frame starts (below).
 
-**`view.go`.** This is the layout. The sidebar, the columns and the panel keep stable keys as panes come and go, so
-editors never lose their state. Tabs are dragged as values within the window, and the drop targets a column offers only
-show during a drag.
+## Windows and projects
+
+**`main.zig`.** `Main` holds what the app shares: the settings (`settings.Store`), the state (`state.State`), the keymap,
+the terminal profiles, the menu bar and the windows (`shells`). `main` takes the single-instance lock, so a later
+`mycode` hands its folders and files to the running one (`Main.second`, then `openArgs`): a folder goes to the window
+that has it or opens as a project, and a file opens in the project whose folder holds it. Headless runs (any
+`--myzig-` flag) skip the lock and leave the registry alone. Without folders on the command line, the projects open
+when MyCode quit come back, else the working directory. `newWindow` makes a window whose title bar the app draws
+(`.title_bar = .hidden`), each keeping its place under its own state key. `quit` and `closeShell` save the state;
+`regroup` gathers every window's projects into the one in front when **Project Tabs** is turned on, and parts them into
+a window each when it is turned off.
+
+**`shell.zig`.** A `Shell` is a window: its projects, the rail of them on its left while project tabs are on, the title
+bar, the theme, and the window's own commands (`Shell.run`: open folder or file, settings, zoom, themes, icons,
+appearance, the command line, updates, quit). Only the project shown is built; the others keep running out of sight,
+and a terminal of theirs that rings marks their square. `addProject` restores a folder's session or takes the layout of
+the project shown. Open dialogs run after the frame (`askLater`, posted through the mainthread queue), because a dialog
+runs its own loop, which would deliver background results into a half-built frame. Files dropped on the window go to
+the terminal under the pointer, into the Explorer's folder under it, or to the column they land on (`onDrop`).
+
+Closing a project never frees it at once. `closeProjectNow` adds it to `dropping`, and `Shell.view` calls `dropClosed`
+as the next frame starts: the frame that closed it may be the project's own (its command or menu), and that frame is
+laid out after its view from the project's strings. The last project gone, the window stays with **No Folder Open**
+(`noFolder`), whose commands are queued in `pending` and run by the shell itself.
+
+**`workbench.zig`.** A `Workbench` is a project: one folder's sidebar (Explorer, Search, Source Control), its editor
+columns (`Editors`), its terminal panel, its status bar, quick open, the prompt and confirmation boxes, the branch
+picker, the review comments, the Git runner and the folder's watcher. Its `view` runs the queued commands, reads the
+disk again when `refresh_next` is set (the project shown again, the window focused), then builds the sidebar, the
+columns and panel, and the status bar, and lastly the drags and boxes over the window. `session` and `restore` turn its
+columns, tabs, carets, layout and open folders into a `state.Session` and back. Its work is split by area:
+`wb_run.zig` runs commands, `wb_editor.zig` draws the columns and takes the keys, `wb_files.zig` handles files,
+terminals and the boxes over the window, and `wb_git.zig` handles Git.
+
+## Commands, menus and keys
+
+**`commands.zig`.** Every command is a `Cmd`, named once. `info` gives its title, its menu (the palette shows
+"Group: Title"), its accelerator for the menu bar, a key the window takes itself, and the Go app's id, which
+`keybindings.json` may still name; `byId` finds a command by either name. The menu bar, the palette, the keys and the
+UI tests all run the same commands.
+
+**`wb_run.zig`.** `run` runs a command in a project, after offering it to `Shell.run` for the window's own. Commands from
+the menu bar reach `Main.queue`, then the focused window's project's `pending` list, and run as its next frame starts,
+once the frame's state is known.
+
+**`menubar.zig`.** `layout` is the menu bar as data: groups between separators, and submenus for themes, conflicts,
+stashes, recent folders and terminal profiles. `build` turns it into myzig's menu items, with checks from `isOn` and
+the accelerators `keybindings.json` has not taken. `Main.menuIfChanged` builds it again only when the recent folders,
+the settings, the keys or the review comments changed; the labels live in `menu_arena` while the menu shows.
+
+**`keymap.zig`.** `keybindings.json` is read in VS Code's format, comments and trailing commas too (`stripJsonc`): keys
+and chords of up to four keys, `-command` removals, `when` conditions (`holds`), and `runCommands`, `type`,
+`workbench.action.terminal.sendSequence` and `vscode.open` as steps. Keys and commands it does not know are told once
+in a toast. The file is read again as the window takes the keyboard (`loadKeysIfChanged`) or as it is saved in MyCode
+(`Shell.fileSaved`). A binding on a menu accelerator takes it off the menu (`takesAccel`).
+
+**`wb_editor.zig` (`keys`).** Each frame asks the keymap first, with what has the keyboard as its `when` context, so a
+chord's next key never types. Then come the keys the window takes itself (project, column and tab numbers, and the
+editor's line commands). A terminal with the keyboard keeps its shell's keys and passes on only the workbench's own
+(`shellSkip`); off macOS it is offered keys before the menu bar (`c.keys_first`).
 
 ## Documents, editors and columns
 
-**`document.go`, `columns.go`.** A document is a file's text, its undo history and its Git marks. An editor is a
-document as one tab shows it, with its own selection, scroll position and paint caches. A column holds tabs, each of
-which is an editor or a terminal.
+**`doc.zig`.** A `Doc` is a file open in a tab: a myzig `ui.CodeEditor` holding its text, with highlighting, undo,
+find and the selection, plus saving and reloading, line endings (a CRLF file is read without its CRs and written with
+them), the gutter's marks of the lines changed since `HEAD`, conflict blocks, and what the editor draws over its lines
+(other occurrences of the word at the caret, blame and review notes after lines' ends). Tabs share a `Doc` by counting
+(`retain`, `release`): **Split Right** shows a file in two columns with one text and one undo history.
+`reloadIfChanged` reads a file changed on disk again unless it has edits, as a step of undo.
 
-**`columnlock.go`.** A locked column stays when empty and does not take implicit
-file opens. `fileColumn` selects the current unlocked column or the last one used,
-creating a workspace on the left if all columns are locked. Explicit drops and
-session restoration name their target column directly. Removing an empty file
-column keeps the last unlocked workspace and transfers width only to other
-unlocked columns, so locked columns do not expand as files close. Sessions keep
-each column's lock and the last file column along with the existing width weights.
+The marks are made again whenever the text's version changes (`updateMarks`): `HEAD`'s text is read once with
+`git show`, then the lines are compared with `ui.diff`. A file and its base larger than 8 MB together get no marks.
 
-A column has at most one preview tab, marked `transient`. The Explorer and search open files with `previewFile`,
-which shows a file in the tab that has it, else in the preview tab's place, dropping the document it showed unless
-another tab does, else in a new one. Opening a file the usual way, an edit, a double click on the tab and a drag to
-another column keep the tab, and only kept tabs go among quick open's recent files. A commit clicked in source control opens with
-`previewCommit` in the same place, through `previewIn`, which both share; `showCommit` keeps it.
+**`columns.zig`.** `Editors` holds a project's columns. A `Column` has its tabs, the one shown and whether it is locked;
+an `Item` is a tab whose `Body` is a file, a picture, the Changes tab, a commit or a terminal. Each column has at most
+one preview tab: `openFile` with `preview` takes the preview tab's place, while an edit, a double click or opening a file
+for good keeps it. Files open in `fileColumn`, the focused column unless it is locked for terminals. When two tabs show
+one file, each keeps its own selection and preview state in its `Item`, swapped into the shared editor as it is drawn.
+`tick` saves a file a second after its last edit while **Auto Save** is on. Closing a tab whose changes would be lost
+queues it in `ask_close` for a question; closed tabs are kept for **Reopen Closed Tab**. `tabdrag.zig` works out where
+a dragged tab, an Explorer file or files from the system land: between tabs, in a column, or on its edge for a new
+column.
 
-Typing is credited to the editor that has the keyboard, and the selections of the document's other editors move with
-the text. A text area scrolls to its caret when its text changes. So an editor without the keyboard parks the area's
-caret in view, keeps its own selection, and stays where it was scrolled.
+**`wb_editor.zig`.** `columnsView` lays the columns out side by side in nested splits, each with its strip of tabs and
+its body: the editor with its breadcrumbs, sticky lines, conflict buttons, review strip, minimap (`minimap.zig`) and
+overview ruler (`ruler.zig`); a picture; a list of diffs; or a terminal. Each body is keyed by its `Item`, so tabs keep
+their state as columns come and go. A file opened to edit takes the keyboard for a few frames (`focus_editor`). The
+welcome page shows while no tab is open.
 
-**`editor.go`, `wrap.go`.** The editor is a `TextAreaBufferBase` inside a container that scrolls sideways.
+**`editing.zig`.** Editing commands are functions of a `ui.TextArea`, each one step of undo: moving, copying, deleting
+and inserting lines, sorting them, changing case, trimming trailing whitespace and reindenting.
 
-- **Unwrapped,** every line has the same height. Line numbers are painted into the area's left padding at paint time, so
-  they stay in step while scrolling.
-- **Wrapped,** the area is as wide as the view and reports where it laid out each line, using MyGo's `TrackLines`.
-  Decorations are placed along a line as if it did not wrap, then split onto its visual rows.
+**`symbols.zig`.** A file's functions, types and headings are found from the shapes of its lines, so they work in any
+language. They serve `@` in quick open, the sticky lines and the breadcrumbs.
 
-Only the lines in view get `TextRanges` colors. Those colors are kept from frame to frame, and merged into as few ranges
-as possible.
+**`findwidget.zig`, `peek.zig`.** The find widget sits over the editor, which finds and marks the matches itself. A
+click on a gutter mark opens `peek.zig`'s box with `HEAD`'s lines, from which the change is reverted or staged.
 
-## Editing and undo
+## Explorer, quick open and search
 
-**`history.go`.** Undo and redo belong to the app, not to the text area. The buffer is a persistent tree, so each step
-keeps the text from before an edit at little cost. Typing done by the text area is detected when its frame starts, and
-joins the previous step until a pause or a caret move.
+**`explorer.zig`.** The Explorer is a myzig `ui.outline` over the folder, each folder read as it first opens
+(`fs.list`). Git's state colors each changed file and the folders above it, and the files Git ignores
+(`git ls-files --ignored --directory`) show faint. Its menu creates, renames, trashes and reveals files; files pasted or
+dropped on a row copy into its folder. `wb_files.zig` acts on its events. `fs.zig` holds the small file helpers and the
+names left out (`skipped`, and `heavy` folders such as `node_modules`).
 
-**`editing.go`, `autoclose.go`.** Editing commands are functions of a document and its selection. Keys reach them
-before the text area does, and they run in the next frame, once the selection is known. Brackets close by following up
-the edit that typed them, within the same undo step.
+**`quickopen.zig`.** Quick open lists the folder's files with `git ls-files`, or else a walk of at most 50,000 files, and
+finds them with a fuzzy `score`, recent files first. `>` turns it into the command palette (each command with its keys,
+and a terminal of each profile), `@` goes to a symbol of the file shown, and `:42` or `:42:7` to a line and column.
+**Open Recent** (`Shell.recentBox`) and **Switch Branch** (`branches.zig`) are boxes like it.
 
-## Decorations
+**`search.zig`.** Search in files lists the files as quick open does, then reads and matches them on a thread of its own,
+with match case, whole word, regular expressions (`ui.Regex`), and files to include and to exclude (`glob.zig`, which
+also serves `files.exclude`). Files with unsaved edits are searched as the editor has them. Results come back through
+the mainthread queue 20 files at a time. Each search has a generation number in a `Shared` block the thread holds
+on to: a newer search or a closed project makes the thread stop and its batches be dropped, so typing never shows stale
+results. A search stops at 20,000 matches, and skips files over 4 MB. Replacing goes through `replaceAll`.
 
-**`decorations.go`, `selection.go`, `sticky.go`.** These paint what goes around the text: indent guides, bracket pairs,
-other occurrences of a word, and the selection with its whitespace.
+## Source control
 
-- Each decoration is computed for the visible lines only, and recomputed only when the text, the caret or the view
-  changes.
-- Decorations are placed by measuring the text the way the text area lays it out, with tabs at the platform's stops.
-- Sticky lines and breadcrumbs are derived from indentation, so they work in any language.
+**`git.zig`.** Git runs through its command line, never a library (`run`), with `GIT_TERMINAL_PROMPT=0`,
+`GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C` and `GIT_EDITOR=true`, so a login that needs a prompt fails rather than hanging and
+Git's words come in English. `status` reads `git status --porcelain=v1 -z` into `Change`s, marking submodules.
 
-## Image viewer
+**`scm.zig`, `scmtree.zig`.** The source control view groups the changes as merge changes, staged changes, changes and
+untracked files, by path or as a tree (`scmtree.zig`, a folder with only one folder in it merged into one row), with
+the commit box, the branch with fetch, pull and push, a banner while a merge, rebase, cherry-pick or revert is stopped
+for conflicts (`Op.of` reads the Git folder), and the commit graph. `Scm.refresh` reads the status, the branch, its
+distance from upstream and the remotes on the main thread. It runs when the project is shown again or the window
+focused, when the watcher reports a change, and after each Git command; each read bumps `generation`, which the
+Changes tab follows.
 
-**`viewer.go`.** An image tab holds a viewer instead of a document. The bitmap is decoded off the main thread and
-painted over a checkerboard, at a scale and offset the viewer keeps.
+**`gitops.zig`, `wb_git.zig`.** Commands that take a while (fetch, pull, push, checkout, stash, commit, merge, rebase and
+the like) go through a `Runner`, one at a time, off the main thread, while a bar moves under the title; `onGitDone`
+hears how each went. Quick commands (stage, unstage) run at once through `wb_git.quick`. Before a command that rewrites
+the work tree, auto save saves the open files, and `worktree.docsSaved` stops it while one still has unsaved changes.
+Inline blame runs `git blame --porcelain` for the caret's line on a thread (`BlameJob`), 0.6 seconds after the caret
+stops on a saved file.
 
-An SVG preview is a viewer shown in place of its editor. It parses the text shortly after each edit and keeps the last
-image that parsed. The text area stays built, out of sight, so the editor keeps its place.
+**`hunks.zig`.** Staging, unstaging or discarding one run of changes never applies a patch. The texts are compared
+again (`hunksOf`), the hunk is applied toward one side (`apply`), and the result is written to the index with
+`git hash-object -w` and `git update-index --cacheinfo` (`writeIndex`). Reverting a hunk in the editor is an edit of
+the document.
 
-## Git
+**`difflist.zig`, `changes.zig`, `commitview.zig`.** A `DiffList` shows the diffs of several files in one scroll: each
+file under a header, side by side or in one column (`auto` chooses side by side when each side has room for 80
+columns), its runs of changes under `@@` lines with buttons to stage, unstage or discard them, three unchanged lines
+around them, and review comments under their lines. A file is read as it comes into view, and one with over 2,000
+changed lines starts folded. The rows are made again each frame from myzig's `ui.DiffView`. `wb_git.readSide` reads
+each side: a blob through `git show`, or the work tree's file as the editor has it, so the **Changes** tab
+(`changes.zig`, staged changes first, then the rest) follows a file as it is typed. A commit's tab (`commitview.zig`)
+is the same list, with the files `git diff-tree` names against the first parent, under a card of the commit's message.
 
-**`internal/git`.** This package runs the `git` command, never a library. It finds the work tree with `git rev-parse`
-and keeps the root spelled as the folder it came from, so paths match the editor's even through a symlink. It reads
-`git status --porcelain=v2` and runs stage, unstage, discard, commit, blame, switch, fetch, pull and push. Commands run
-with `GIT_TERMINAL_PROMPT=0` and SSH in batch mode, so a login that needs a prompt fails instead of hanging.
+**`graph.zig`.** **COMMITS** in source control shows the branch's last 50 commits (`git log`, or of every branch), more on
+**Show More Commits**, each given a lane so the branches draw as a graph, with its author's initials, branches, tags and
+age.
 
-**`git.go`, `scm.go`.** The window keeps the status, read in the background when the tree sees a change, after a save
-or a Git command, when the window gets focus, and every 5 seconds. A status that reads the same as the last is dropped,
-so what is worked out from it is kept: the groups of source control and their rows are made once for each status, and
-the diff lists its files again only for a new one. The last commits are read again when HEAD or its upstream moves. Every 1.5 seconds it also checks the times of the
-index, `HEAD` and `FETCH_HEAD`. A commit or checkout made in a terminal changes them, and then the documents compare
-their lines again. Commands from the source control view run in the background, and the status is read again after
-each.
+**`branches.zig`, `worktree.zig`, `conflicts.zig`, `review.zig`.** `branches.zig` is the box of **Switch Branch** and
+**Delete Branch**, local and remote branches ordered by their last commit, and the stash's box. `worktree.zig` opens the
+worktree a branch is checked out in, here or in a window of its own, and prunes one whose folder is gone. `conflicts.zig`
+finds the blocks of conflict markers (diff3's base too) and resolves one by taking a side. `review.zig` keeps review
+comments on lines of files until MyCode quits; each follows its lines as the file changes, and **Send Review Comments to
+Terminal** pastes them all into the terminal for an agent to read.
 
-**`internal/gitmarks`, `internal/linediff`.** The text at `HEAD` is read with `git show`, and the lines are compared using
-Myers' diff in the background after each edit. Comparing a few edits in a 100,000-line file takes about 0.25 ms. The
-diff gives hunks, runs of lines replaced, which the gutter marks, the peek box and the diff tab all use.
+## Terminals
 
-**`hunks.go`.** Reverting a hunk is an edit of the document. Staging one cannot apply the HEAD hunk to the index
-directly, because the index may already differ from HEAD. So the index text is compared with the editor's again, the
-hunks of that comparison that overlap the change are applied, and the result goes in with `git hash-object` and
-`git update-index`. There is no patch to build and no fuzz to go wrong.
+**`panel.zig`.** A `Term` is one terminal, made with the terminal plugin's `Terminal.create`, shown in the bottom panel
+or in a column's tab. It keeps its folder, its profile, whether it rang or asked for attention (OSC 9 and OSC 777) while
+out of sight, and pastes pictures and copied files as a terminal agent expects. `Panel` is the bottom panel with its
+chips, profiles and buttons; its requests (a new terminal, a move to a column) go to `wb_files.panelRequest`. `Host` is
+what terminals report to: the window to redraw, the font of the settings, and the links Ctrl+click opens.
 
-**`diffview.go`.** A diff tab paints its rows itself in a pane that scrolls both ways, rather than using text areas. A
-text area has no way to leave the blank rows that side by side needs across from lines the other side lacks. Only the
-rows in view are painted, each side has its own highlighter, and word changes are found for the rows in view. The
-cost is that both sides are read-only. Double-clicking opens the file to edit.
+**`termprofiles.zig`.** The profiles are the shells this machine has (PowerShell 7, Windows PowerShell, Command Prompt,
+Git Bash and WSL on Windows; `/etc/shells` elsewhere) and those `terminalProfiles` adds.
 
-The one diff tab holds every file the status lists, staged and not, each read and compared on its own, four at a
-time, and only those within a view's height of what shows. `diffrows.go` lays the rows out again only when what they
-show changes: a file read, a gap opened, the layout, or the width while lines wrap. As a file above the view is read
-and grows, the row chosen, or else the row at the top, keeps its place on screen. It folds the unchanged lines into gaps, keyed by the line of the new side they start at so an
-open gap stays open as the file is typed in, and puts a header before each run of changes. A row may be several lines
-tall as its line wraps, so each row's top is kept, and the row at a point is found by binary search.
-`diffpaint.go` paints the rows in view.
+**`termlinks.zig`.** A clicked link names a path with the `:line` or `:line:col` compilers print after it, Git Bash's
+`/c/...` and WSL's `/mnt/c/...` as Windows names them, or `~/`. `Shell.openLink` resolves a relative one from where the
+shell is now, where it started, then the project, and opens the file at its line or reveals the folder.
 
-`diffhunks.go` stages, unstages and discards a run of changes from the diff as `hunks.go` stages one from the gutter:
-it reads the index and the file again, finds the changes again among theirs, and puts the result in with `git
-hash-object`. Discarding edits an open document, or else writes the file.
+## Background work
 
-A commit's tab is the same view in another mode. It lists the files the commit changed from its first parent with
-`git diff-tree`, reads each side with `git show`, and puts a card of the commit's message before them. Its files never
-change, so it reads nothing again as the work tree does.
+**`jobs.zig`.** Work off the main thread goes through `spawn`: `work` runs on a thread of its own, then `done` runs on
+the main thread through the mainthread plugin's queue (a message-only window on Windows), so nothing polls. A project
+registers itself with `live` and leaves with `gone`; a job's `done` checks `isAlive` first, since its project may have
+closed while it ran. `post` hands any function to the main thread. Git commands, blame, update checks and searches run
+this way; the Git status, the gutter's marks and the diffs' sides are read on the main thread.
 
-**`search.go`.** Search in files reads the files of the quick-open index on a few goroutines, and an open document's
-text when it has unsaved edits. Each search has a number, and what an older one posts back is dropped, so typing never
-shows stale results. Found files come back every 60 ms and are kept sorted by path. A document edited, or a file the
-tree reports changed, is searched again alone and its results replaced. The folders of results are watched so a file
-changed on disk is noticed even when its folder is closed in the tree. Replacing finds the matches again in the text as
-it is, then edits an open document as one step of undo or writes a closed file in the background.
-`internal/workspace/glob.go` matches the files to include and to exclude.
+**`fswatch.zig`.** Each project's `FsWatch` follows its folder with the watch plugin on a thread of its own, recursively,
+with 150 ms of debounce. It leaves out heavy folders and Git's objects but watches `.git` itself and `.git/refs`, so a
+commit or checkout made in a terminal is seen. A change sets atomic flags and posts once to the main thread, where
+`Workbench.onDiskChange` reads the Explorer, the open files and Git's state again.
 
-**`branchpicker.go`.** Switch Branch is a box like quick open's. It reads the branches, local and of the remotes, with
-`git for-each-ref` as it opens, the one committed to last first, and finds them with the same fuzzy matcher as files.
+## Settings and state
 
-**`recentpicker.go`.** Open Recent's box is the same kind of box over the recent folders the settings keep. ⌃R is a
-shortcut of the view rather than of the menu, so that a terminal with the keyboard keeps it.
+**`settings.zig`.** The settings live in `settings.json` in the data folder: `%APPDATA%\MyCode` (myzig's
+`appPath(.config, "MyCode")`), or the folder `MAYOI_DATA_DIR` names. A first start copies `settings.json` and
+`keybindings.json` from a `Mayoi` folder beside it. `Store.reload` reads the file again when its time changes, checked
+as each frame starts and as the window takes the keyboard, and bumps `version` so views apply the change once. `set`
+writes one key while keeping the keys this app does not know. `keybindings.json` is made empty if missing.
 
-**`blame.go`.** Once the caret rests on a line for 350 ms, `git blame --contents -` blames that line of the editor's
-text, unsaved edits included.
+**`state.zig`.** The app's memory is `state-zig.json` beside the settings (the Go app's `state.json` had another shape):
+the projects open and the one in front, the recent folders (20), and a session for each folder (30): its columns and
+tabs with carets, selection, scroll and preview state, the sidebar and panel, and the folders open in the Explorer.
+`Main.saveState` writes it as projects open and close, and as a window loses the keyboard.
 
-## Internal packages
+## Themes and looks
 
-**`internal/highlight`.** Chroma lexing runs on a background goroutine. It lexes the whole file up to 6,000 lines, and
-a window around the view beyond that. A file just opened has the lines around the view lexed first.
+**`themes.zig`.** The palettes of MyCode, The Matrix (always dark), Claude and Qoder, each light and dark but The Matrix.
+`uiTheme` makes myzig's theme and `syntax` the code's colors; `Shell.applyTheme` applies them each frame, with the first
+installed family of `fontFamily`. `icons.zig` draws file icons from the Material Icon Theme (`icons/material.zig`, made
+by `icons/update.py`) or Lucide's (`lucide.zig`, made by `icons/lucide.py`). `rain.zig` paints The Matrix's rain behind
+the welcome page, a step every 70 ms, and `mascot.zig` the Claude and Qoder characters; both step from the time and hold
+still while the window does not have the keyboard. `logo.zig` finds a project's icon for the rail, and `checks.zig`
+makes the checkerboard behind pictures once.
 
-- **After an edit,** only the lines around it are lexed again. Lexing starts a little above the edit, at a line outside
-  any string or comment over lines, and is kept only if the lines before the edit come out as they did. Below the edit
-  it stops once a few lines come out as they did. A keystroke in a 6,000-line Go file costs about 0.7 ms rather than
-  170 ms.
-- **Once typing pauses,** the whole range is lexed again and any line that came out otherwise is put right, for the
-  lexers whose state the tokens around a line do not tell.
-- **Until a pass is done,** the lines an edit moved keep their colors, and so does a line edited by one insertion or
-  deletion. A line changed otherwise shows plain, so stale colors never land on the wrong text.
+## Viewer
 
-**`internal/workspace`.** Directories are read as they are expanded and watched with fsnotify, with bursts of changes
-batched together. This package also holds the file index and the fuzzy matcher for quick open.
+**`viewer.zig`.** A picture opens in an `Image` tab rather than a document: its bytes go to myzig's picture cache under a
+key that changes when the file is read again, and it is fitted, zoomed and dragged over the checkerboard. Markdown shows
+rendered (`ui.Markdown`, local pictures only, never fetched) and SVG as a picture updated as it is typed, both in place of
+their editor.
 
-**`internal/vfs`.** The file system the editor uses: each function does what the `os` function of its name does.
-`Command` runs a program in a folder, which is how `internal/git`, `gitmarks` and the index run `git`.
+## Updates, shell integration and crashes
 
-## Theme
+**`updates.zig`.** A release build looks at GitHub's latest release once a day, ten seconds after it starts, with
+`curl.exe` on a job thread; **Check for Updates…** looks at once. The box shows the release notes and offers to install
+it (the installer is downloaded and run, and MyCode quits), skip that version or wait. The choice is kept in
+`updater.json`; development builds never look.
 
-**`theme.go`.** The palettes for the window, the code and the terminal: MyCode's own light and
-dark, and the other themes that the `theme` setting names: The Matrix, which makes the native window dark whatever the
-`appearance` setting is, and Claude and Qoder, which have a light and a dark palette and are as the appearance is. `rain.go` paints The Matrix's digital rain behind the welcome page,
-worked out from the time alone, a step every 70 ms. `mascot.go` places a theme's character on the welcome page and in
-the status bar, its pose also worked out from the time, asking for a frame only when the pose next changes: `clawd.go`
-paints Claude's from cells, and `qoduck.go` Qoder's duck from vector shapes. It also styles what floats over
-the window, dialogs and the boxes over an editor, and fades them in as they show.
+**`winshell.zig`.** On Windows, an installed MyCode sets up the `mycode` command (`mycode.cmd`, and `mycode` for Git Bash,
+in `%LOCALAPPDATA%\MyCode\bin`, added to the user's PATH) and the **Open with MyCode** menus of folders, their insides,
+drives and files under `HKCU`, off the main thread as it starts (`atStart`). A build in `zig-out` leaves them alone.
+Uninstalling them leaves a `no-shell-integration` marker so they stay away; `--uninstall-shell` removes them for the
+uninstaller.
 
-## Performance
+**`crashlog.zig`.** A release started from Explorer has no console, so its error output (panics, a fault's stack) goes
+to `crash-zig.log` in the data folder. A log the last run left with something in it moves to `crashes/` as the app
+starts, and the last 10 are kept.
 
-These figures come from the tests, run on an M-series Mac:
+## Tests
 
-- A 100,000-line file opens in about 20 ms.
-- Scrolling and typing cost under 2 ms per frame, or about 3 ms with find open.
-- Highlighting again after a keystroke in a 6,000-line file takes under 1 ms.
-- Quick open searches 100,000 paths in about 1.5 ms.
+**Unit tests** sit beside the code as `test` blocks, and `zig build test` runs those of the files `main.zig`'s `test`
+block names: parsing Git's status, keybindings, globs, conflicts, hunks, editing, symbols, search, the state's JSON and
+more.
+
+**UI tests** live in `uitest/main.zig` and run with `zig build uitest` (`zig build uitest -- NAME` runs the cases whose
+names hold NAME). Each case makes its folders under the temporary folder (`mycode-uitest/caseN`), optionally commits
+them to a Git repository, writes its settings, and runs the built app headless with its own `MAYOI_DATA_DIR`,
+`--myzig-snapshot` and a `--myzig-script` of clicks, keys and typing. A step that finds no text fails the case, so
+`move:TEXT` checks that a text is shown, and a crash fails it too. Some cases then check what the app left: a saved file,
+a commit, its state.

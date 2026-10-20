@@ -1,8 +1,12 @@
-/build/
-/.mygo/
-mygo_windows_*.syso
-/mayoi
-/cmd/mayoi/mayoi
+# The build, its packages and the myzig CLI's work.
+.zig-cache/
+zig-out/
+dist/
+.myzig/
+# The terminal's libraries, beside the app for the installer (README.md).
+resources/*.dll
+resources/*.exe
+
 /.agents/
 /.claude/worktrees/
 /.qoder/worktrees/

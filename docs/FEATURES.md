@@ -13,8 +13,8 @@ Paste.
 
 ## Editor
 
-Tabs, line numbers, a highlighted caret line, and Chroma syntax highlighting. Files changed on disk reload unless you
-have unsaved edits.
+Tabs, line numbers, a highlighted caret line, and syntax highlighting for some seventy languages, markup, Markdown
+and diffs. Files changed on disk reload unless you have unsaved edits.
 
 A file clicked in the Explorer, or chosen in search's results, opens in a preview tab, its name in italics: the next
 file chosen takes its place, so looking through files leaves one tab. Editing it, double-clicking it or its tab,

@@ -4,8 +4,8 @@
 
 <h1 align="center">MyCode</h1>
 
-<p align="center">A small, fast code editor written in Go. It draws a native UI on the GPU with
-<a href="https://github.com/egoist/mygo">MyGo</a>, with no webview and no Electron, and the packaged app is about 18 MB.</p>
+<p align="center">A small, fast code editor written in Zig. It draws a native UI on the GPU with
+<a href="https://github.com/hunghg255/myzig">myzig</a>, with no webview and no Electron, and the installer is about 4 MB.</p>
 
 <p align="center">By <a href="https://github.com/hunghg255">hunghg255</a>, from <a href="https://github.com/sorrycc/Mayoi">Mayoi</a> by chencheng.</p>
 
@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/673e7907-2b2c-4ed6-9093-1ba9633cd61c
 
 ## Features
 
-- **Editor:** tabs with preview tabs, Chroma syntax highlighting, a minimap, indent guides, sticky scroll, breadcrumbs,
+- **Editor:** tabs with preview tabs, syntax highlighting for some seventy languages, a minimap, indent guides, sticky scroll, breadcrumbs,
   word wrap, and ⇧⌘T to reopen closed tabs
 - **Smart editing:** auto-indent, auto-closing brackets and quotes, line commands, sorting, and per-tab undo
 - **Columns:** split the editor side by side, drag tabs between columns, and lock a column for terminals
@@ -93,23 +93,74 @@ npm run build      # build a static site into docs/dist
 
 ## Requirements
 
-- macOS 13 or later
-- Go 1.27 or later
+- Windows 10 or later to run it
+- Zig 0.17 and a checkout of [myzig](https://github.com/hunghg255/myzig) beside this folder (`../myzig`), with its
+  `terminal`, `watch` and `mainthread` plugins, to build it
 
-MyCode also builds for Linux and Windows.
+MyCode is made and tested on Windows. Its code also compiles for Linux and macOS, which myzig draws on too, but
+it hasn't been run there yet.
 
 ## Getting started
 
 ```sh
-go run ./cmd/mayoi ~/some/project    # open a folder or a file
-go tool mygo build                   # build build/darwin-arm64/MyCode.app and a .dmg
+zig build run -- ~/some/project   # open a folder or a file
+zig build                         # zig-out/bin/mycode.exe
+zig build test                    # unit tests
+zig build uitest                  # UI tests: the app run headless with scripts (uitest/main.zig)
+zig build uitest -- search        # the UI tests whose names hold "search"
+zig build -Doptimize=ReleaseSafe -Dwindows-gui=true   # zig-out/bin/mycode.exe, as the installer has it
+zig-out/bin/mycode.exe <folder> --myzig-snapshot=shot.png --myzig-script="click:README.md"   # headless
 ```
 
-To open folders from a shell, choose **File → Install 'mycode' Command** on macOS, then run `mycode .` or
-`mycode <file>`. On Windows the installed app adds `mycode` to your `PATH` and **Open with MyCode** to File
-Explorer's menu of folders and files by itself.
+The installed app adds `mycode` to your `PATH` and **Open with MyCode** to File Explorer's menu of folders and files
+by itself, then run `mycode .` or `mycode <file>`. A second `mycode` hands its folders and files to the MyCode
+already open.
+
+Settings, keybindings and the windows' state are kept in `%APPDATA%\MyCode` (or the folder `MAYOI_DATA_DIR` names):
+`settings.json`, `keybindings.json` and `state-zig.json`. MyCode's first start takes Mayoi's settings, when there
+are some.
+
+The UI tests make their folders in `%TEMP%\mycode-uitest`, each case with its own settings, and run the app with
+`--myzig-snapshot` and a script: a step that finds no text fails, so `move:TEXT` checks a text is shown. Some cases
+then check what the app wrote: a saved file, a commit, its state. Headless runs leave the `mycode` command and File
+Explorer's menus alone.
+
+The terminal downloads libghostty-vt and ConPTY into the user's cache the first time it opens, unless they are
+beside the executable: `resources/` holds them for the installer (`ghostty-vt.dll`, `conpty.dll`,
+`OpenConsole.exe`, from `%LOCALAPPDATA%\mygo\natives`; they are not in Git).
+
+The file icons (the Material Icon Theme's) are in `icons/material`, made by `scripts/materialicons/update.sh`, and
+embedded by `icons/material.zig`, which `python icons/update.py` writes. The UI's own icons (Lucide's) are in
+`src/lucide.zig`.
+
+## The installer
+
+The myzig CLI (`cd ../myzig/cli && zig build -Doptimize=ReleaseSmall`) packages the app with its icon, version and
+manifest (`myzig.zon`, and the version in `build.zig.zon`), and writes an NSIS script; with
+[NSIS](https://nsis.sourceforge.io) installed it makes the installer:
+
+```sh
+../myzig/cli/zig-out/bin/myzig build --optimize safe
+makensis .myzig/build/windows-x86_64/installer.nsi   # when the CLI didn't find makensis
+```
+
+`dist/windows-x86_64/` then holds `MyCode/`, a `.zip` and `MyCode Setup <version> x86_64.exe`, which installs for the
+user into `%LOCALAPPDATA%\Programs\MyCode`, with a Start menu shortcut and an uninstaller. Uninstalling takes the
+`mycode` command and the Explorer menu away, and offers to delete the settings.
+
+A crash of a release started from Explorer writes what happened to `crash-zig.log` in the data folder; the last ten
+move to `crashes/`.
+
+## Not yet
+
+- Updates download the whole installer and run it, without checking it against a signing key: myzig's updater
+  plugin does, once releases carry its signed manifests (`myzig keygen`, `MYZIG_UPDATER_PRIVATE_KEY`).
+- Review comments show on cards under the editor, not between its lines: myzig's text area leaves no room between
+  lines yet. In a diff they are rows between its lines.
 
 ## Keyboard shortcuts
+
+On Windows and Linux, ⌘ is Ctrl and ⌥ is Alt.
 
 | Shortcut | Action |
 |---|---|

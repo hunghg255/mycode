@@ -6,58 +6,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-MyCode is a native code editor in Go, drawn on the GPU by [MyGo](https://github.com/egoist/mygo) (no webview). It was
-forked from Mayoi and renamed, so the Go module, the main package's folder and some identifiers still say `mayoi`
-(`module mayoi`, `cmd/mayoi`, `MAYOI_DATA_DIR`) while the product is MyCode. `go.mod` replaces `github.com/egoist/mygo`
-with the `hunghg255/mygo` fork, which ships ConPTY for Windows terminals.
+MyCode is a native code editor in Zig, drawn on the GPU by [myzig](https://github.com/hunghg255/myzig) (no webview),
+taken from a checkout beside this one (`../myzig`, with its `terminal`, `watch` and `mainthread` plugins). It was
+first written in Go on MyGo, forked from Mayoi, and ported to Zig; some names still say `mayoi` (`MAYOI_DATA_DIR`)
+or mention the Go app, whose behavior the port follows.
 
 ## Commands
 
 ```sh
-go run ./cmd/mayoi <folder-or-file>          # run the app
-scripts/dev.sh                               # live reload (go tool mygo dev), with its own settings folder
-go tool mygo build                           # package the app into build/ (mygo.json holds name, id, version)
-go test ./...                                # all tests, including headless UI tests
-go test -short ./...                         # skip the tests that start a shell
-go test -run TestName ./cmd/mayoi            # one test
-go test -short -run XXX -bench Frame ./cmd/mayoi   # benchmark an editor frame
-FSHOTS=<dir> go test -run TestFeatColumns ./cmd/mayoi   # one feature's screenshots
+zig build                                    # zig-out/bin/mycode.exe (Zig 0.17)
+zig build run -- <folder-or-file>            # run the app
+zig build test                               # unit tests
+zig build uitest                             # UI tests: the app run headless with scripts (uitest/main.zig)
+zig build uitest -- NAME                     # the UI tests whose names hold NAME
+../myzig/cli/zig-out/bin/myzig build --optimize safe   # dist/windows-x86_64: the app, a zip and the installer
+MAYOI_DATA_DIR=<dir> zig-out/bin/mycode.exe <folder> --myzig-dark --myzig-snapshot=shot.png \
+    --myzig-script="frames:3;click:a.txt;shortcut:ctrl+p;type:x;key:enter;live:1"   # one headless run
 ```
 
-Scripts under `scripts/` are bash (use Git Bash on Windows); `scripts/dev.sh` and the screenshot script assume macOS.
+Script steps (myzig's `ui.Tester.runScript`): `click:TEXT`, `move:TEXT` (fails when the text isn't shown),
+`drag:x,y>x,y` (points; the same point twice is a click), `type:`, `key:enter|backspace|escape|f2…`,
+`shortcut:ctrl+shift+p`, `frames:N`, `wait:S`, `live:S` (the real event loop, for Git and search results). The
+snapshot is 1280x820 points at 2x. Text drawn by the code editor isn't found by `move:`.
+
+Scripts under `scripts/` are bash (Git Bash on Windows).
 
 ## Architecture
 
-`docs/ARCHITECTURE.md` is a detailed tour of the source by area, with performance figures; read the relevant section
-before changing a subsystem. The big picture:
+`docs/ARCHITECTURE.md` is a tour of the source by area; read the relevant section before changing a subsystem. The
+big picture:
 
-- **`cmd/mayoi`** is one large `main` package holding the whole UI. A `frame` is a native window and a `desktop` a
-  project in it with its own `app` (`projects.go`); with project tabs, one window holds several projects and only the
-  one shown is built. Menus, accelerators, keybindings and tests all go through the same commands (`commands.go`).
-- **Documents vs editors.** A document (`document.go`) is a file's text, undo history and Git marks; an editor is one
-  tab's view of it with its own selection and scroll. Undo (`history.go`), editing commands (`editing.go`) and
-  decorations belong to the app, not MyGo's text area, so every column showing a file shares text and history.
-  Editing commands run on the next frame, once the selection is known.
-- **`view.go`** lays out sidebar, columns and panel with stable keys so editors keep their state as panes change.
-- **Background work posts back to the main thread.** Highlighting (`internal/highlight`), line diffs
-  (`internal/gitmarks`, `internal/linediff`), search, Git status and image decoding run off the main thread; results
-  are tagged so stale ones are dropped. Only lines/rows in view are painted or decorated.
-- **`internal/git`** shells out to the `git` CLI (never a library), with prompts disabled. Hunk staging builds the
-  index blob itself (`git hash-object` + `git update-index`) rather than applying patches (`hunks.go`, `diffhunks.go`).
-- **`internal/vfs`** wraps file system and process calls (`Command`); use it rather than `os`/`exec` directly.
-- **`internal/settings`, `internal/keymap`** read and watch `settings.json`, `state.json` and `keybindings.json`
-  (VS Code format); external edits are applied live on the main thread.
-- Platform code is split by file suffix (`_windows.go`, `_other.go`, `_unix_test.go`).
+- **`src/main.zig`** holds `Main` (the app: settings, state, keymap, menus, windows); **`shell.zig`** a `Shell`, one
+  window, with its project tabs; **`workbench.zig`** a `Workbench`, one project, split into `wb_*.zig` files.
+- **Commands** are named once in `commands.zig` and run through `wb_run.run`: menus (`menubar.zig`), the palette,
+  `keybindings.json` (`keymap.zig`, VS Code format) and keys all go through them.
+- **Documents vs editors.** A `Doc` (`doc.zig`) is a file's text, history and Git marks; a tab in a column
+  (`columns.zig`) shows it, and several tabs may share one `Doc`.
+- **Background work** runs on threads (`jobs.zig`) and posts back to the main thread; Git runs through its command
+  line (`git.zig`), never a library. Hunk staging builds the index blob itself (`hunks.zig`).
+- **Settings and state** (`settings.zig`, `state.zig`) live in `%APPDATA%\MyCode` or `MAYOI_DATA_DIR`:
+  `settings.json`, `keybindings.json`, `state-zig.json`; external edits apply live.
+- Windows-only code (`winshell.zig`: the `mycode` command and Explorer menu) checks the OS.
+
+### myzig in practice
+
+- Views are immediate mode, rebuilt every frame, and **laid out after the view returns**: `ui.text` keeps its slice
+  until then, so never pass a stack buffer (use `c.print`), and never free in the middle of a frame what the frame
+  may still show. Closing a project is deferred (`Shell.closeProjectNow`, dropped as the next frame starts).
+- Ids are positional: a box added conditionally before an interactive one changes its id and loses its clicks; use
+  `c.keyed`. Take `c.peekId` right before the text field it names.
+- Text is selectable unless its box has `.control()`.
+- Keep files short and changes to myzig itself out of this repository; myzig is its own project.
 
 ### Tests
 
-UI tests drive a real `app` headlessly with a `fakeHost` (`cmd/mayoi/app_test.go`) standing in for native dialogs,
-clipboard and windows. Tests that start a shell check `testing.Short()`. `*_shot_test.go` files render screenshots.
+Unit tests are `test` blocks pulled in by the `test` block at the end of `main.zig`. UI tests (`uitest/main.zig`)
+make their folders in `%TEMP%\mycode-uitest`, run the app headless and check its screen and what it wrote; headless
+runs leave the registry alone. Add a UI test for a fixed bug that a script can reach.
 
 ## Docs and changelog
 
-- `CHANGELOG.md`'s `## Unreleased` section becomes the release notes and the in-app update window; a release build
-  fails without a `## <version>` section. `scripts/bump.sh` renames it and tags.
+- `CHANGELOG.md`'s `## Unreleased` section becomes the release notes and the in-app update window;
+  `scripts/bump.sh` renames it, sets the version in `build.zig.zon`, tags and publishes the installer.
 - User-facing features are also described in `docs/FEATURES.md`, settings in `docs/SETTINGS.md`.
 - Match the existing prose style of these files: plain, concrete sentences describing what the user sees, with UI
   names in bold.

@@ -30,7 +30,7 @@ export const groups: Group[] = [
     id: 'editor',
     title: 'Editor',
     icon: '⌨',
-    lead: 'Tabs, line numbers, a highlighted caret line and Chroma syntax highlighting. Files changed on disk reload unless you have unsaved edits.',
+    lead: 'Tabs, line numbers, a highlighted caret line and syntax highlighting for some seventy languages. Files changed on disk reload unless you have unsaved edits.',
     features: [
       {
         title: 'Preview tabs',
@@ -95,7 +95,7 @@ export const groups: Group[] = [
       { title: 'Locked columns', text: '**Lock Column** keeps a column for terminals; files opened from the Explorer, Search or Quick Open go to an unlocked column.' },
       { title: 'Move terminal to the right', text: '**Move to Locked Right Column** moves a running terminal there in one step.' },
     ],
-    shots: [{ src: columns, alt: 'Two columns of Go source', caption: 'Two columns of Go source side by side' }],
+    shots: [{ src: columns, alt: 'Two columns of source', caption: 'Two columns of source side by side' }],
   },
   {
     id: 'navigation',
