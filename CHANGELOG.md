@@ -17,6 +17,20 @@ needs a `## <version>` section here, or its build fails.
   guides, JPEG, GIF, BMP and WebP pictures, blame after the caret's line, the box of a change from the gutter
   (revert, stage, next, previous), review comments in a diff, copying and pasting files in the Explorer, choosing
   several files in source control, copying a terminal's selection as it is made, and the update window.
+- The Zig build now does what the Go app does: its menus, with their checks, submenus and every command (**Undo**,
+  **Find Next**, **Toggle Line Comment**, **Go to Bracket**, **Commit & Push**, **Stage File**, **Kill Terminal**,
+  **Move Tab to Next Column** and more), accelerators that keybindings.json takes away, checks in the palette, chords
+  of up to four keys and `runCommands`, and a terminal with the keyboard keeping Ctrl+L and Ctrl+W for its shell. A
+  merge, rebase or cherry-pick stopped for conflicts shows a bar with **Continue** and **Abort**, and a commit's
+  menu merges it, rebases onto it, resets to it, reverts it, cherry-picks it and renames or deletes its branches.
+  **View as Tree** nests folders, the list takes the arrow keys, and **Amend Last Commit** has the next commit amend.
+- In the Zig build, the minimap shows the file in its colors and the selection, drags, scrolls and widens; an
+  overview ruler marks changes, matches, comments and the caret; conflicts have their buttons on their first line;
+  spaces and tabs selected show; `fontFeatures`, `terminalFontFamily` and any `fontWeight` apply; diffs wrap long
+  lines, show full files, keep the file's header at the top, mark the change you are on and take comments from a
+  "+" on the line; pictures sit on a checkerboard, zoom around the pointer and pan; Markdown shows local pictures;
+  tabs drop between tabs and on either side of a column, a middle click closes one, and **Reopen Closed Tab** brings
+  back terminals; terminals drag between the panel and the columns, and their notifications mark the project.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

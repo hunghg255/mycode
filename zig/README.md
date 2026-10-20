@@ -50,14 +50,14 @@ move to `crashes/`.
   branches (switch, create, rename, delete), stash, the commits graph, a commit's changes, the **Changes** tab with
   hunk staging, merge conflicts, review comments sent to the terminal.
 - **Terminals** in the panel or in columns, with profiles (PowerShell, Command Prompt, Git Bash, WSL, your own).
-- **Pictures** (PNG, JPEG, GIF, BMP, WebP), Markdown and SVG previews.
+- **Pictures** (PNG, JPEG, GIF, BMP, WebP) on a checkerboard, zoomed and panned; Markdown (with its local
+  pictures) and SVG previews.
+- **Menus** laid out as the Go app's, with checks, its commands and keybindings.json's accelerators.
 - **Project tabs**, one instance (later launches hand their folders over), the `mycode` command and Explorer menu
   on Windows, the MyCode, Matrix, Claude and Qoder themes, settings and keybindings applied as they are saved.
 
 ## Not yet
 
-- Long lines in a diff don't wrap.
-- `fontFeatures` and `terminalFontFamily`; the whitespace in a selection isn't drawn.
-- Check marks on commands in the palette; a checkerboard behind pictures, and panning them; local pictures in
-  Markdown.
-- Keybindings don't change the accelerators shown in the menus.
+- Updates download the whole installer and run it, without checking it against a signing key: myzig's updater
+  plugin does, once releases carry its signed manifests (`myzig keygen`, `MYZIG_UPDATER_PRIVATE_KEY`).
+- Sessions are kept in `state-zig.json`, apart from the Go app's `state.json`, whose shape differs.
