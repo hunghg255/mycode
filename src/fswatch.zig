@@ -29,7 +29,9 @@ pub const FsWatch = struct {
     pub fn start(gpa: std.mem.Allocator, io: std.Io, root: []const u8, ctx: *anyopaque, notify: *const fn (*anyopaque) void) ?*FsWatch {
         const f = gpa.create(FsWatch) catch return null;
         f.* = .{ .gpa = gpa, .io = io, .root = gpa.dupe(u8, root) catch return null, .ctx = ctx, .notify = notify };
-        f.thread = std.Thread.spawn(.{}, run, .{f}) catch {
+        // Not the default 16 MB stack, which Windows commits whole: one
+        // watcher a project.
+        f.thread = std.Thread.spawn(.{ .stack_size = 1 << 20 }, run, .{f}) catch {
             gpa.free(f.root);
             gpa.destroy(f);
             return null;

@@ -5,6 +5,10 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Each terminal takes about 4 MB of memory instead of about 50 MB, and each open project about 30 MB less: their
+  threads no longer reserve 16 MB stacks, which Windows commits whole. Many projects with several terminals each no
+  longer run out of memory.
+
 - MyCode is now the Zig app alone: the Go app is gone, and the Zig sources, its build and its installer are at the
   top of the repository. The README, CONTRIBUTING, the architecture tour and the site describe building it with
   Zig and myzig.
