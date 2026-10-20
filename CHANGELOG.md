@@ -111,6 +111,9 @@ needs a `## <version>` section here, or its build fails.
   **Stash…** with a hint beside (where the file goes, the branch a new one starts from), the button named for what
   it does and off while the name is empty, a name taken or not allowed said in the box without closing it, and
   **Rename** choosing the name without its extension.
+- The Zig build's **Manage** menu is the Go app's: **Command Palette…** and **Settings** with their keys, **Keyboard
+  Shortcuts**, **Theme** (its appearance off under the Matrix), **File Icon Theme**, **Default Terminal Profile**,
+  and **Project Tabs** and **Auto Save** with their checks, under a gear with its tooltip.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

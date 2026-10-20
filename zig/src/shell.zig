@@ -734,29 +734,44 @@ pub const Shell = struct {
         c.changed = true;
     }
 
-    /// The gear: the Manage menu, as VS Code's.
+    /// The gear: the Manage menu, as the Go app's.
     pub fn manageButton(sh: *Shell, c: *ui.Context, wb: *Workbench) void {
         const t = c.theme;
         const g = ui.div(c).w(40).h(36).center().rounded(6).hover(t.surface_hover);
-        icons.sym(c, "wrench.and.screwdriver", .{ .size = 12, .color = if (g.hovered()) t.text else t.muted });
+        icons.sym(c, "gear", .{ .size = 14, .color = if (g.hovered()) t.text else t.muted });
         const gi = g.interaction();
         g.end();
+        ui.tooltip(c, gi, "Manage");
         if (ui.buttonMenu(c, &sh.manage_menu, gi)) |m| {
             defer m.end();
-            const items = [_]Cmd{ .command_palette, .open_settings, .open_keybindings };
-            for (items) |cmd| if (m.item(commands.info(cmd).title, .{})) wb.queue(cmd);
+            const s = &sh.store.s;
+            if (m.item("Command Palette…", .{ .shortcut = Shell.keyLabel(sh, c, .command_palette) })) wb.queue(.command_palette);
+            m.separator();
+            if (m.item("Settings", .{ .shortcut = Shell.keyLabel(sh, c, .open_settings) })) wb.queue(.open_settings);
+            if (m.item("Keyboard Shortcuts", .{})) wb.queue(.open_keybindings);
+            m.separator();
             if (m.submenu("Theme")) |sub| {
                 defer sub.end();
                 const ts = [_]Cmd{ .theme_mycode, .theme_matrix, .theme_claude, .theme_qoder };
-                for (ts, 0..) |cmd, i| if (sub.item(themes.titles[i], .{ .checked = std.mem.eql(u8, sh.store.s.theme, themes.names[i]) })) wb.queue(cmd);
+                for (ts, 0..) |cmd, i| if (sub.item(themes.titles[i], .{ .checked = std.mem.eql(u8, s.theme, themes.names[i]) })) wb.queue(cmd);
                 sub.separator();
-                const as = [_]struct { Cmd, []const u8, []const u8 }{ .{ .appearance_system, "Follow System", "" }, .{ .appearance_light, "Light", "light" }, .{ .appearance_dark, "Dark", "dark" } };
-                for (as) |a| if (sub.item(a[1], .{ .checked = std.mem.eql(u8, sh.store.s.appearance, a[2]) })) wb.queue(a[0]);
+                // The Matrix is dark whatever the system is.
+                const matrix = std.mem.eql(u8, s.theme, "matrix");
+                const as = [_]struct { Cmd, []const u8, []const u8 }{ .{ .appearance_system, "System", "" }, .{ .appearance_light, "Light", "light" }, .{ .appearance_dark, "Dark", "dark" } };
+                for (as) |a| if (sub.item(a[1], .{ .checked = std.mem.eql(u8, s.appearance, a[2]), .disabled = matrix })) wb.queue(a[0]);
             }
-            if (m.submenu("Default Terminal")) |sub| {
+            if (m.submenu("File Icon Theme")) |sub| {
+                defer sub.end();
+                if (sub.item("Material", .{ .checked = !std.mem.eql(u8, s.iconTheme, "lucide") })) wb.queue(.icons_material);
+                if (sub.item("Lucide", .{ .checked = std.mem.eql(u8, s.iconTheme, "lucide") })) wb.queue(.icons_lucide);
+            }
+            if (m.submenu("Default Terminal Profile")) |sub| {
                 defer sub.end();
                 for (sh.profiles, 0..) |pr, i| if (sub.item(pr.name, .{ .checked = i == sh.defaultProfile() })) sh.setDefaultProfile(i);
             }
+            m.separator();
+            if (m.item("Project Tabs", .{ .checked = s.projectTabs })) wb.queue(.toggle_project_tabs);
+            if (m.item("Auto Save", .{ .checked = s.autoSave })) wb.queue(.toggle_auto_save);
             m.separator();
             if (m.item("Check for Updates…", .{})) wb.queue(.check_updates);
         }
