@@ -196,15 +196,16 @@ pub const Shell = struct {
         return false;
     }
 
-    /// Closes a project at the end of the frame: the frame may be building
-    /// it still (its command closed it, or its menu).
+    /// Closes a project as the next frame starts: this one may be building
+    /// it still (its command closed it, or its menu), and lays out its text
+    /// after the view.
     pub fn closeProjectNow(sh: *Shell, wb: *Workbench) void {
         if (std.mem.indexOfScalar(*Workbench, sh.dropping.items, wb) != null) return;
         sh.dropping.append(sh.gpa, wb) catch return;
         if (sh.window) |w| w.redraw();
     }
 
-    /// The projects closed in this frame, gone once nothing builds them.
+    /// The projects closed in the last frame, gone once nothing uses them.
     fn dropClosed(sh: *Shell) void {
         while (sh.dropping.items.len > 0) sh.dropNow(sh.dropping.pop().?);
     }
@@ -223,6 +224,8 @@ pub const Shell = struct {
             sh.main.saveState();
             return;
         }
+        // A project before the one shown gone, the one shown stays shown.
+        if (i < sh.current) sh.current -= 1;
         sh.current = @min(sh.current, sh.projects.items.len - 1);
         sh.title_dirty = true;
         sh.main.saveState();
@@ -234,12 +237,12 @@ pub const Shell = struct {
         if (sh.main.focusFolder(path)) return;
         if (new_window or !sh.store.s.projectTabs) {
             if (!sh.store.s.projectTabs and !new_window and sh.projects.items.len == 1) {
-                // Without project tabs a folder takes the window's place.
+                // Without project tabs a folder takes the window's place:
+                // the old project goes as the next frame starts, as it may be the
+                // one building this frame (its welcome page's recent folder).
                 const old = sh.projects.items[0];
-                sh.main.keepSession(old);
-                _ = sh.projects.orderedRemove(0);
-                old.destroy();
-                _ = sh.addProject(path) catch {};
+                _ = sh.addProject(path) catch return;
+                sh.closeProjectNow(old);
                 return;
             }
             sh.main.newWindow(&.{path}) catch {};
@@ -481,6 +484,9 @@ pub const Shell = struct {
 
     pub fn view(sh: *Shell, c: *ui.Context) void {
         if (c.input.mouse.x > -1e5) sh.last_mouse = c.input.mouse;
+        // The projects closed last frame go before this one builds: that
+        // frame laid its text out after its view, from their strings.
+        sh.dropClosed();
         if (sh.store.reload()) {}
         sh.main.menuIfChanged();
         sh.tellKeyErrors();
@@ -500,7 +506,6 @@ pub const Shell = struct {
         } else sh.noFolder(c);
         sh.recentBox(c);
         if (sh.main.focused == sh or sh.main.shells.items.len == 1) if (sh.main.updates.view(c)) sh.main.quit();
-        defer sh.dropClosed();
         // Projects out of sight whose terminals rang or asked attention:
         // their squares are marked, their tips say what for.
         for (sh.projects.items, 0..) |wb, i| if (i != sh.current) {

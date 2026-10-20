@@ -279,11 +279,11 @@ pub const Main = struct {
                 for (roots.items) |r| m.gpa.free(r);
                 roots.deinit(m.gpa);
             }
-            while (front.projects.items.len > 1) {
-                const wb = front.projects.pop().?;
-                m.keepSession(wb);
+            // The others go to windows of their own; their projects here at
+            // the next frame's start, as one of them may be building this one.
+            for (front.projects.items[1..]) |wb| {
                 roots.append(m.gpa, m.gpa.dupe(u8, wb.root) catch continue) catch {};
-                wb.destroy();
+                front.closeProjectNow(wb);
             }
             front.current = 0;
             for (roots.items) |r| m.newWindow(&.{r}) catch {};

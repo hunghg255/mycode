@@ -139,6 +139,8 @@ needs a `## <version>` section here, or its build fails.
 - Fixed in the Zig build: erasing the query of the command palette or quick open past its `>`, `@` or `:` no longer
   quits the app, nor does closing a project; the window of the last project closed stays, with **No Folder
   Open**, a button to open one and the recent folders, as the Go app's.
+- Fixed in the Zig build: with **Project Tabs** off, opening a recent folder from the welcome page no longer quits
+  the app, nor does turning **Project Tabs** off with several projects open.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.
