@@ -150,6 +150,14 @@ const cases = [_]Case{
         }.f,
     },
     .{
+        // Files are read in the background: the diff shows once they are.
+        .name = "the Changes tab shows each changed file's diff",
+        .files = files_ab,
+        .repos = &.{"alpha"},
+        .changes = &.{ .{ .path = "alpha/a.txt", .data = "first line changed\n" }, .{ .path = "alpha/b.txt", .data = "second line changed\n" } },
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;live:1;" ++ palette ++ "Open All Changes;key:enter;live:2;move:first line changed;move:second line changed" }},
+    },
+    .{
         .name = "a merge conflict is resolved with Accept Incoming and Accept Current",
         .files = &.{
             .{ .path = "alpha/a.txt", .data = "top\nbase one\nm1\nm2\nm3\nm4\nbase two\nend\n" },

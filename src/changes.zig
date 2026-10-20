@@ -45,7 +45,14 @@ pub const Changes = struct {
         defer if (keep) |k| g.free(k);
         if (ch.list.current()) |e| keep = g.dupe(u8, e.path) catch null;
 
-        ch.list.clear();
+        // The files read before keep their diffs, read again in the
+        // background, rather than loading afresh (the list would jump).
+        var before = ch.list.entries;
+        ch.list.entries = .empty;
+        defer {
+            for (before.items) |*e| DiffList.freeEntry(g, e);
+            before.deinit(g);
+        }
         var buf: [std.fs.max_path_bytes + 8]u8 = undefined;
         var buf2: [std.fs.max_path_bytes + 8]u8 = undefined;
         for (changes) |c| if (c.status() == .conflict) {
@@ -68,6 +75,7 @@ pub const Changes = struct {
             ch.list.add(c.path, null, 'U', "Untracked", false, "", "@") catch {};
             ch.list.markSub(c.sub);
         };
+        ch.list.keepFrom(before.items);
         for (ch.list.entries.items, 0..) |*e, i| {
             var kb: [std.fs.max_path_bytes + 40]u8 = undefined;
             const k = std.fmt.bufPrint(&kb, "{s}\x00{s}", .{ e.group, e.path }) catch continue;

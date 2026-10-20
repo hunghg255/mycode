@@ -220,13 +220,63 @@ pub const Scm = struct {
 
     /// Reads the status, the branch, its distance from upstream and the commits.
     pub fn refresh(s: *Scm) void {
+        const top = s.locate() orelse return;
+        s.applyStatus(readStatus(s.gpa, s.io, top, s.commits_open, s.graph.all, s.graph.limit));
+    }
+
+    /// The work tree's top and its Git folder, found once.
+    pub fn locate(s: *Scm) ?[]const u8 {
         if (s.top == null) s.top = git.topLevel(s.gpa, s.io, s.root);
         if (s.top) |t| if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, t, '/', std.fs.path.sep);
-        const top = s.top orelse return;
-        s.clear();
+        const top = s.top orelse return null;
+        if (s.git_dir == null) s.git_dir = git.line(s.gpa, s.io, top, &.{ "rev-parse", "--absolute-git-dir" });
+        return top;
+    }
+
+    /// What `refresh` reads of Git, from any thread; `applyStatus` takes it
+    /// on the main thread.
+    pub const Status = struct {
+        changes: []git.Change = &.{},
+        buf: []u8 = &.{},
+        branch: ?[]u8 = null,
+        ab: branches.AheadBehind = .{},
+        upstream: ?[]u8 = null,
+        has_remote: bool = false,
+        graph: ?Graph.Raw = null,
+        /// What Git ignores, for the Explorer, when asked for.
+        ignored: ?[]u8 = null,
+
+        pub fn deinit(st: Status, gpa: std.mem.Allocator) void {
+            if (st.ignored) |i| gpa.free(i);
+            if (st.changes.len > 0) gpa.free(st.changes);
+            if (st.buf.len > 0) gpa.free(st.buf);
+            if (st.branch) |b| gpa.free(b);
+            if (st.upstream) |u| gpa.free(u);
+            if (st.graph) |g| g.deinit(gpa);
+        }
+    };
+
+    pub fn readStatus(gpa: std.mem.Allocator, io: std.Io, top: []const u8, commits: bool, all: bool, limit: usize) Status {
+        var st: Status = .{};
         var buf: []u8 = &.{};
-        s.changes = git.status(s.gpa, s.io, top, &buf) catch &.{};
-        s.buf = buf;
+        st.changes = git.status(gpa, io, top, &buf) catch &.{};
+        st.buf = buf;
+        st.branch = git.branch(gpa, io, top);
+        st.ab = branches.aheadBehind(gpa, io, top);
+        st.upstream = if (st.ab.upstream) git.line(gpa, io, top, &.{ "rev-parse", "--abbrev-ref", "@{upstream}" }) else null;
+        if (git.line(gpa, io, top, &.{"remote"})) |r| {
+            st.has_remote = r.len > 0;
+            gpa.free(r);
+        }
+        if (commits) st.graph = Graph.fetch(gpa, io, top, all, limit);
+        return st;
+    }
+
+    /// Takes a status read (owned).
+    pub fn applyStatus(s: *Scm, st: Status) void {
+        s.clear();
+        s.changes = st.changes;
+        s.buf = st.buf;
         // The files chosen that are still changed stay chosen.
         var i: usize = s.chosen.items.len;
         while (i > 0) {
@@ -239,17 +289,16 @@ pub const Scm = struct {
         }
         s.generation += 1;
         if (s.branch) |b| s.gpa.free(b);
-        s.branch = git.branch(s.gpa, s.io, top);
-        s.ab = branches.aheadBehind(s.gpa, s.io, top);
+        s.branch = st.branch;
+        s.ab = st.ab;
         if (s.upstream) |u| s.gpa.free(u);
-        s.upstream = if (s.ab.upstream) git.line(s.gpa, s.io, top, &.{ "rev-parse", "--abbrev-ref", "@{upstream}" }) else null;
-        if (git.line(s.gpa, s.io, top, &.{"remote"})) |r| {
-            s.has_remote = r.len > 0;
-            s.gpa.free(r);
-        } else s.has_remote = false;
-        if (s.git_dir == null) s.git_dir = git.line(s.gpa, s.io, top, &.{ "rev-parse", "--absolute-git-dir" });
+        s.upstream = st.upstream;
+        s.has_remote = st.has_remote;
         s.op = if (s.git_dir) |d| Op.of(s.io, d) else .none;
-        if (s.commits_open) s.graph.load(s.io, top);
+        if (st.graph) |g| {
+            s.graph.loadRaw(g);
+            g.deinit(s.gpa);
+        }
     }
 
     /// Which command stopped for conflicts, and how many are left, with the

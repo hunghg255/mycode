@@ -172,12 +172,28 @@ pub const Explorer = struct {
 
     /// Reads what Git ignores (`ls-files --ignored --directory`), shown faint.
     pub fn readIgnored(e: *Explorer, top: ?[]const u8) void {
+        const t = top orelse return e.clearIgnored();
+        const out = listIgnored(e.gpa, e.io, t) orelse return e.clearIgnored();
+        defer e.gpa.free(out);
+        e.setIgnored(t, out);
+    }
+
+    /// What Git ignores in the work tree `top` (NUL-separated, owned), from
+    /// any thread; null when Git can't say.
+    pub fn listIgnored(gpa: std.mem.Allocator, io: std.Io, top: []const u8) ?[]u8 {
+        const r = git.run(gpa, io, top, &.{ "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory" }) catch return null;
+        gpa.free(r.stderr);
+        if (!r.ok) {
+            gpa.free(r.stdout);
+            return null;
+        }
+        return r.stdout;
+    }
+
+    /// Takes what `listIgnored` read: those files show faint.
+    pub fn setIgnored(e: *Explorer, t: []const u8, out: []const u8) void {
         e.clearIgnored();
-        const t = top orelse return;
-        const r = git.run(e.gpa, e.io, t, &.{ "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory" }) catch return;
-        defer r.deinit(e.gpa);
-        if (!r.ok) return;
-        var it = std.mem.tokenizeScalar(u8, r.stdout, 0);
+        var it = std.mem.tokenizeScalar(u8, out, 0);
         var n: usize = 0;
         while (it.next()) |p| : (n += 1) {
             if (n > 20_000) break;

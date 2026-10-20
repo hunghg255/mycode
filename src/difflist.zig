@@ -3,7 +3,8 @@
 //! removed (folded by a click, and at first past 2,000 lines), each run of
 //! changes under an `@@` line with buttons to stage, unstage or discard it,
 //! three unchanged lines around them, side by side or in one column, and
-//! review comments under their lines. Files are read as they come into view.
+//! review comments under their lines. Files are read as they come into view,
+//! in the background (diffload.zig).
 //! The keys are a pager's. A commit's tab is made of it too.
 const std = @import("std");
 const myzig = @import("myzig");
@@ -12,6 +13,12 @@ const icons = @import("icons.zig");
 const hunks = @import("hunks.zig");
 const symbols = @import("symbols.zig");
 const Review = @import("review.zig").Review;
+const jobs = @import("jobs.zig");
+const diffload = @import("diffload.zig");
+
+/// Entries' ids, across lists: a read in the background finds its entry by
+/// it (main thread only).
+var next_id: u64 = 1;
 
 pub const Entry = struct {
     /// Relative to the work tree's top, with slashes.
@@ -33,6 +40,11 @@ pub const Entry = struct {
     added: usize = 0,
     deleted: usize = 0,
     loaded: bool = false,
+    /// Read before Git's status changed: shown as it was until read again.
+    stale: bool = false,
+    /// Being read in the background.
+    pending: bool = false,
+    id: u64 = 0,
     folded: bool = false,
     /// A submodule: its sides are the commits it is at; it opens as a
     /// folder and isn't discarded.
@@ -60,6 +72,14 @@ pub const Event = union(enum) {
 pub const Reader = struct {
     ctx: *anyopaque,
     read: *const fn (ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path: []const u8) []u8,
+    /// For reads in the background: what only the main thread can read
+    /// (an open file's text, else null), the rest from any thread in the
+    /// work tree `top`, and the window to draw again after.
+    capture: ?*const fn (ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path: []const u8) ?[]u8 = null,
+    side: ?*const fn (gpa: std.mem.Allocator, io: std.Io, top: []const u8, spec: []const u8, path: []const u8) []u8 = null,
+    top: []const u8 = "",
+    io: std.Io = undefined,
+    wake: ?*const fn (ctx: *anyopaque) void = null,
 };
 
 pub const Layout = enum { auto, split, inline_ };
@@ -111,8 +131,12 @@ pub const DiffList = struct {
     focus_id: u64 = 0,
     menu: ui.Menu = .{},
     selected_entry: usize = 0,
+    /// Known to jobs (a read in the background), which drop their texts
+    /// once the list is gone.
+    registered: bool = false,
 
     pub fn deinit(dl: *DiffList) void {
+        if (dl.registered) jobs.gone(dl);
         dl.clear();
         dl.entries.deinit(dl.gpa);
         dl.refs.deinit(dl.gpa);
@@ -123,7 +147,7 @@ pub const DiffList = struct {
         dl.entries.clearRetainingCapacity();
     }
 
-    fn freeEntry(gpa: std.mem.Allocator, e: *Entry) void {
+    pub fn freeEntry(gpa: std.mem.Allocator, e: *Entry) void {
         if (e.dv) |*d| d.deinit();
         gpa.free(e.path);
         if (e.orig) |o| gpa.free(o);
@@ -149,7 +173,31 @@ pub const DiffList = struct {
             .staged = staged,
             .old_spec = try g.dupe(u8, old_spec),
             .new_spec = try g.dupe(u8, new_spec),
+            .id = next_id,
         });
+        next_id += 1;
+    }
+
+    /// Gives the entries made again what `old`'s same files had read (the
+    /// same group, path and sides): they show it until read again, rather
+    /// than loading afresh, and `old` keeps only what to free.
+    pub fn keepFrom(dl: *DiffList, old: []Entry) void {
+        for (dl.entries.items) |*e| for (old) |*o| {
+            if (o.id == 0 or !std.mem.eql(u8, o.group, e.group) or !std.mem.eql(u8, o.path, e.path)) continue;
+            if (!std.mem.eql(u8, o.old_spec, e.old_spec) or !std.mem.eql(u8, o.new_spec, e.new_spec)) continue;
+            e.dv = o.dv;
+            e.old_text = o.old_text;
+            e.new_text = o.new_text;
+            e.syms = o.syms;
+            e.added = o.added;
+            e.deleted = o.deleted;
+            e.loaded = o.loaded;
+            e.pending = o.pending;
+            e.stale = o.loaded;
+            e.id = o.id;
+            o.* = .{ .path = o.path, .orig = o.orig, .badge = o.badge, .group = o.group, .old_spec = o.old_spec, .new_spec = o.new_spec };
+            break;
+        };
     }
 
     /// The entry the selection is in.
@@ -193,8 +241,12 @@ pub const DiffList = struct {
     }
 
     pub fn load(dl: *DiffList, e: *Entry, r: Reader) void {
-        const old = r.read(r.ctx, dl.gpa, e.old_spec, e.path);
-        const new = r.read(r.ctx, dl.gpa, e.new_spec, e.path);
+        dl.apply(e, r.read(r.ctx, dl.gpa, e.old_spec, e.path), r.read(r.ctx, dl.gpa, e.new_spec, e.path));
+    }
+
+    /// Takes an entry's two sides as read (owned): the diff again, unless
+    /// they are what it shows.
+    pub fn apply(dl: *DiffList, e: *Entry, old: []u8, new: []u8) void {
         if (e.loaded and std.mem.eql(u8, old, e.old_text) and std.mem.eql(u8, new, e.new_text)) {
             dl.gpa.free(old);
             dl.gpa.free(new);
@@ -551,11 +603,14 @@ pub const DiffList = struct {
             dl.first_built = first;
             dl.last_built = last;
         }
-        // Files are read as they come into view, one a frame.
-        if (to_load) |ei| {
-            dl.load(&dl.entries.items[ei], r);
-            c.changed = true;
-        }
+        // Files are read as they come into view, and again once Git's
+        // status changed, in the background.
+        if (to_load) |ei| diffload.request(dl, &dl.entries.items[ei], r);
+        if (first != std.math.maxInt(usize)) for (first..last + 1) |i| {
+            if (i >= dl.refs.items.len) break;
+            const e = &dl.entries.items[dl.entryOf(i)];
+            if (e.stale or !e.loaded) diffload.request(dl, e, r);
+        };
         return ev;
     }
 

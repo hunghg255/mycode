@@ -85,6 +85,14 @@ pub const Workbench = struct {
     /// Commands from the menu bar and keys, run at the next frame.
     pending: std.ArrayList(Cmd) = .empty,
     refresh_next: bool = true,
+    /// Git's status read in the background (`refreshGitSoon`): one at a
+    /// time, another after it when asked meanwhile, and the refreshes made
+    /// at once, which make a background read begun before them stale.
+    git_job: bool = false,
+    git_again: bool = false,
+    /// The next background read also reads what Git ignores.
+    git_ignored: bool = false,
+    git_seq: u64 = 0,
     /// The Changes tab follows Git's status by its generation.
     confirm: ui.OverlayState = .{},
     confirm_kind: Confirm = .discard_file,
@@ -205,7 +213,7 @@ pub const Workbench = struct {
             wb.explorer.refresh();
             wb.editors.reloadChanged();
         }
-        if (ch.git or ch.files) wb.refreshGit();
+        if (ch.git or ch.files) wb.refreshGitSoon();
         if (wb.shell.active() == wb) if (wb.shell.window) |w| w.redraw();
     }
 
@@ -224,7 +232,25 @@ pub const Workbench = struct {
     }
 
     pub fn refreshGit(wb: *Workbench) void {
+        wb.git_seq += 1;
         wb.scm.refresh();
+        wb.gitRefreshed();
+    }
+
+    /// Git's status read again in the background: as the disk changes and
+    /// the window comes back, which `git status` and the log, run on the
+    /// main thread, made stutter in large repositories.
+    pub fn refreshGitSoon(wb: *Workbench) void {
+        if (wb.scm.locate() == null) return wb.refreshGit();
+        if (wb.git_job) {
+            wb.git_again = true;
+            return;
+        }
+        @import("wb_git.zig").statusInBackground(wb);
+    }
+
+    /// What follows Git's status: the Explorer's marks, the files' gutters.
+    pub fn gitRefreshed(wb: *Workbench) void {
         if (wb.scm.top) |top| wb.explorer.setChanges(top, wb.scm.changes) else wb.explorer.setChanges(wb.root, &.{});
         // Files' marks are made again against HEAD (it may have moved).
         for (wb.editors.cols.items) |col| for (col.items.items) |it| switch (it.body) {
@@ -356,8 +382,10 @@ pub const Workbench = struct {
             wb.refresh_next = false;
             wb.editors.reloadChanged();
             wb.explorer.refresh();
-            wb.refreshGit();
-            wb.explorer.readIgnored(wb.scm.top);
+            // What Git ignores too: read with the status, in the background.
+            wb.git_ignored = true;
+            wb.refreshGitSoon();
+            if (wb.scm.top == null) wb.explorer.readIgnored(null);
         }
         wb.explorer.excludes = sh.store.s.filesExclude;
         wb.editors.auto_save = sh.store.s.autoSave;

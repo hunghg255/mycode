@@ -117,7 +117,7 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
             wb.scm.top = null;
             wb.refreshGit();
         },
-        .git_refresh => wb.refreshGit(),
+        .git_refresh => wb.refreshGitSoon(),
         .git_commit => commit(wb, wb.scm.count(.staged) == 0, false, false),
         .git_commit_amend => amendFill(wb),
         .git_undo_commit => undoCommit(wb),
@@ -731,13 +731,30 @@ pub fn openCommit(wb: *Workbench, rev: []const u8, keep: bool) void {
 pub fn readSide(ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path: []const u8) []u8 {
     const wb: *Workbench = @ptrCast(@alignCast(ctx));
     const t = top(wb) orelse return gpa.dupe(u8, "") catch &.{};
+    if (openSide(ctx, gpa, spec, path)) |text| return text;
+    return readSideAt(gpa, wb.io, t, spec, path);
+}
+
+/// An open file's text, for the work tree's side ("@"): main thread only.
+fn openSide(ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path: []const u8) ?[]u8 {
+    const wb: *Workbench = @ptrCast(@alignCast(ctx));
+    if (!std.mem.eql(u8, spec, "@")) return null;
+    const t = top(wb) orelse return null;
+    const abs = joinNative(gpa, t, path) catch return null;
+    defer gpa.free(abs);
+    const d = wb.editors.findDoc(abs) orelse return null;
+    return d.editor.area.text(gpa);
+}
+
+/// A side as Git and the disk have it, from any thread: a blob (`git
+/// show`), the file in the work tree, or a submodule's commit.
+fn readSideAt(gpa: std.mem.Allocator, io: std.Io, t: []const u8, spec: []const u8, path: []const u8) []u8 {
     if (spec.len == 0) return gpa.dupe(u8, "") catch &.{};
     if (std.mem.eql(u8, spec, "@")) {
         const abs = joinNative(gpa, t, path) catch return gpa.dupe(u8, "") catch &.{};
         defer gpa.free(abs);
-        if (fs.isDirectory(wb.io, abs)) return subproject(wb, gpa, abs, null);
-        if (wb.editors.findDoc(abs)) |d| return d.editor.area.text(gpa);
-        const data = fs.read(gpa, wb.io, abs) catch return gpa.dupe(u8, "") catch &.{};
+        if (fs.isDirectory(io, abs)) return subproject(io, gpa, abs, null);
+        const data = fs.read(gpa, io, abs) catch return gpa.dupe(u8, "") catch &.{};
         if (std.mem.indexOf(u8, data, "\r\n") == null) return data;
         defer gpa.free(data);
         return std.mem.replaceOwned(u8, gpa, data, "\r\n", "\n") catch gpa.dupe(u8, "") catch &.{};
@@ -745,9 +762,9 @@ pub fn readSide(ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path:
     // A submodule's side is the commit it is at, as `git diff` shows it.
     if (std.fs.path.join(gpa, &.{ t, path })) |abs| {
         defer gpa.free(abs);
-        if (fs.isDirectory(wb.io, abs)) return subproject(wb, gpa, t, spec);
+        if (fs.isDirectory(io, abs)) return subproject(io, gpa, t, spec);
     } else |_| {}
-    const out = hunks.show(gpa, wb.io, t, spec);
+    const out = hunks.show(gpa, io, t, spec);
     if (std.mem.indexOf(u8, out, "\r\n") == null) return out;
     defer gpa.free(out);
     return std.mem.replaceOwned(u8, gpa, out, "\r\n", "\n") catch gpa.dupe(u8, "") catch &.{};
@@ -756,20 +773,106 @@ pub fn readSide(ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path:
 /// "Subproject commit <hash>": of the blob `spec` names in `dir`'s
 /// repository, or else of the submodule checked out at `dir`, "-dirty"
 /// when its files have changes.
-fn subproject(wb: *Workbench, gpa: std.mem.Allocator, dir: []const u8, spec: ?[]const u8) []u8 {
-    const hash = git.line(gpa, wb.io, dir, &.{ "rev-parse", "-q", "--verify", spec orelse "HEAD" }) orelse
+fn subproject(io: std.Io, gpa: std.mem.Allocator, dir: []const u8, spec: ?[]const u8) []u8 {
+    const hash = git.line(gpa, io, dir, &.{ "rev-parse", "-q", "--verify", spec orelse "HEAD" }) orelse
         return gpa.dupe(u8, "") catch &.{};
     defer gpa.free(hash);
     var dirty = false;
-    if (spec == null) if (git.run(gpa, wb.io, dir, &.{ "status", "--porcelain" })) |r| {
+    if (spec == null) if (git.run(gpa, io, dir, &.{ "status", "--porcelain" })) |r| {
         defer r.deinit(gpa);
         dirty = r.ok and std.mem.trim(u8, r.stdout, " \r\n").len > 0;
     } else |_| {};
     return std.fmt.allocPrint(gpa, "Subproject commit {s}{s}\n", .{ hash, if (dirty) "-dirty" else "" }) catch gpa.dupe(u8, "") catch &.{};
 }
 
+/// Reads Git's status on a thread, then gives it to source control
+/// (`Workbench.refreshGitSoon`).
+pub fn statusInBackground(wb: *Workbench) void {
+    const Job = struct {
+        wb: *Workbench,
+        gpa: std.mem.Allocator,
+        io: std.Io,
+        top: []u8,
+        commits: bool,
+        all: bool,
+        limit: usize,
+        seq: u64,
+        ignored: bool,
+        st: @import("scm.zig").Scm.Status = .{},
+
+        fn work(j: *@This()) void {
+            j.st = @import("scm.zig").Scm.readStatus(j.gpa, j.io, j.top, j.commits, j.all, j.limit);
+            if (j.ignored) j.st.ignored = @import("explorer.zig").Explorer.listIgnored(j.gpa, j.io, j.top);
+        }
+
+        fn done(j: *@This()) void {
+            defer {
+                j.gpa.free(j.top);
+                j.gpa.destroy(j);
+            }
+            if (!@import("jobs.zig").isAlive(j.wb)) return j.st.deinit(j.gpa);
+            const w = j.wb;
+            w.git_job = false;
+            // Read before a refresh made at once: that one is newer.
+            if (j.seq != w.git_seq) {
+                j.st.deinit(j.gpa);
+            } else {
+                if (j.st.ignored) |ig| {
+                    w.explorer.setIgnored(j.top, ig);
+                    j.gpa.free(ig);
+                    j.st.ignored = null;
+                }
+                w.scm.applyStatus(j.st);
+                w.gitRefreshed();
+                if (w.shell.window) |win| win.redraw();
+            }
+            if (w.git_again) {
+                w.git_again = false;
+                w.refreshGitSoon();
+            }
+        }
+    };
+    const top_dir = wb.scm.top orelse return;
+    const j = wb.gpa.create(Job) catch return wb.refreshGit();
+    j.* = .{
+        .wb = wb,
+        .gpa = wb.gpa,
+        .io = wb.io,
+        .top = wb.gpa.dupe(u8, top_dir) catch {
+            wb.gpa.destroy(j);
+            return wb.refreshGit();
+        },
+        .commits = wb.scm.commits_open,
+        .all = wb.scm.graph.all,
+        .limit = wb.scm.graph.limit,
+        .seq = wb.git_seq,
+        .ignored = wb.git_ignored,
+    };
+    wb.git_ignored = false;
+    wb.git_job = true;
+    @import("jobs.zig").spawn(Job, j, Job.work, Job.done) catch {
+        wb.git_job = false;
+        wb.gpa.free(j.top);
+        wb.gpa.destroy(j);
+        wb.refreshGit();
+    };
+}
+
 pub fn reader(wb: *Workbench) difflist.Reader {
-    return .{ .ctx = wb, .read = readSide };
+    return .{
+        .ctx = wb,
+        .read = readSide,
+        .capture = openSide,
+        .side = if (top(wb) != null) readSideAt else null,
+        .top = top(wb) orelse "",
+        .io = wb.io,
+        .wake = struct {
+            fn f(ctx: *anyopaque) void {
+                const w: *Workbench = @ptrCast(@alignCast(ctx));
+                if (w.shell.window) |win| win.redraw();
+            }
+        }.f,
+    };
 }
 
 /// The Changes tab's events.

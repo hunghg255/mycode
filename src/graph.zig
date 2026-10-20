@@ -70,34 +70,79 @@ pub const Graph = struct {
         g.arena.deinit();
     }
 
-    pub fn load(g: *Graph, io: std.Io, top: []const u8) void {
-        _ = g.arena.reset(.retain_capacity);
-        const a = g.arena.allocator();
+    /// What Git says of the commits: the log, the remotes and the commits
+    /// not pushed. Read from any thread, with `a`.
+    pub const Raw = struct {
+        log: ?[]const u8 = null,
+        remotes: []const u8 = "",
+        unpushed: []const u8 = "",
+
+        pub fn deinit(r: Raw, gpa: std.mem.Allocator) void {
+            if (r.log) |l| gpa.free(l);
+            gpa.free(r.remotes);
+            gpa.free(r.unpushed);
+        }
+    };
+
+    pub fn fetch(a: std.mem.Allocator, io: std.Io, top: []const u8, all: bool, limit: usize) Raw {
         var nbuf: [16]u8 = undefined;
-        const n = std.fmt.bufPrint(&nbuf, "-n{d}", .{g.limit}) catch "-n50";
-        const args: []const []const u8 = if (g.all)
+        const n = std.fmt.bufPrint(&nbuf, "-n{d}", .{limit}) catch "-n50";
+        const args: []const []const u8 = if (all)
             &.{ "log", "--format=%H%x00%P%x00%an%x00%cr%x00%D%x00%s", n, "--all" }
         else
             &.{ "log", "--format=%H%x00%P%x00%an%x00%cr%x00%D%x00%s", n };
-        const r = git.run(a, io, top, args) catch return;
-        if (!r.ok) {
+        var raw: Raw = .{ .remotes = a.dupe(u8, "") catch "", .unpushed = a.dupe(u8, "") catch "" };
+        if (git.run(a, io, top, args)) |r| {
+            a.free(r.stderr);
+            if (r.ok) raw.log = r.stdout else a.free(r.stdout);
+        } else |_| {}
+        if (git.run(a, io, top, &.{"remote"})) |r| {
+            a.free(r.stderr);
+            a.free(raw.remotes);
+            raw.remotes = r.stdout;
+        } else |_| {}
+        // Commits not pushed: those after the upstream.
+        if (git.run(a, io, top, &.{ "rev-list", "@{upstream}..HEAD" })) |r| {
+            a.free(r.stderr);
+            a.free(raw.unpushed);
+            raw.unpushed = r.stdout;
+        } else |_| {}
+        return raw;
+    }
+
+    pub fn load(g: *Graph, io: std.Io, top: []const u8) void {
+        _ = g.arena.reset(.retain_capacity);
+        g.parse(fetch(g.arena.allocator(), io, top, g.all, g.limit));
+    }
+
+    /// Takes what a thread read (`fetch` with the gpa, which `raw` stays
+    /// owned by).
+    pub fn loadRaw(g: *Graph, raw: Raw) void {
+        _ = g.arena.reset(.retain_capacity);
+        const a = g.arena.allocator();
+        g.parse(.{
+            .log = if (raw.log) |l| a.dupe(u8, l) catch null else null,
+            .remotes = a.dupe(u8, raw.remotes) catch "",
+            .unpushed = a.dupe(u8, raw.unpushed) catch "",
+        });
+    }
+
+    /// The commits from `raw`, whose text lives in the arena.
+    fn parse(g: *Graph, raw: Raw) void {
+        const a = g.arena.allocator();
+        const log = raw.log orelse {
             g.commits = &.{};
             return;
-        }
+        };
         var remotes: std.ArrayList([]const u8) = .empty;
-        if (git.run(a, io, top, &.{"remote"})) |rm| {
-            var it = std.mem.tokenizeAny(u8, rm.stdout, "\r\n");
-            while (it.next()) |name| remotes.append(a, name) catch {};
-        } else |_| {}
+        var rit = std.mem.tokenizeAny(u8, raw.remotes, "\r\n");
+        while (rit.next()) |name| remotes.append(a, name) catch {};
         g.remotes = remotes.items;
-        // Commits not pushed: those after the upstream.
         var unpushed: std.StringHashMapUnmanaged(void) = .empty;
-        if (git.run(a, io, top, &.{ "rev-list", "@{upstream}..HEAD" })) |u| {
-            var it = std.mem.tokenizeAny(u8, u.stdout, "\r\n");
-            while (it.next()) |h| unpushed.put(a, h, {}) catch {};
-        } else |_| {}
+        var uit = std.mem.tokenizeAny(u8, raw.unpushed, "\r\n");
+        while (uit.next()) |h| unpushed.put(a, h, {}) catch {};
         var list: std.ArrayList(Commit) = .empty;
-        var it = std.mem.tokenizeScalar(u8, r.stdout, '\n');
+        var it = std.mem.tokenizeScalar(u8, log, '\n');
         while (it.next()) |l| {
             var f = std.mem.splitScalar(u8, l, 0);
             const hash = f.next() orelse continue;

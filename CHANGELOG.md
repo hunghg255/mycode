@@ -5,6 +5,10 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- The Changes tab no longer stutters while files change on disk: Git's status, the commits and each file's two sides
+  are read in the background, and a file read before keeps its diff while it is read again, rather than showing
+  **Reading…** and moving the list. Coming back to the window no longer waits for Git either.
+
 - While Ctrl (⌘ on macOS) is held over a terminal, the link or file path under the pointer is underlined, with a hand,
   so you can see what a click opens.
 - Right-clicking a commit opens one menu, not one for every commit in the list, and its items act on that commit.
