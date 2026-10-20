@@ -62,9 +62,11 @@ pub fn topLevel(gpa: std.mem.Allocator, io: Io, dir: []const u8) ?[]u8 {
     return line(gpa, io, dir, &.{ "rev-parse", "--show-toplevel" });
 }
 
-/// The branch checked out, or the short hash of a detached HEAD.
+/// The branch checked out (one without commits yet too), or the short
+/// hash of a detached HEAD.
 pub fn branch(gpa: std.mem.Allocator, io: Io, dir: []const u8) ?[]u8 {
-    const b = line(gpa, io, dir, &.{ "rev-parse", "--abbrev-ref", "HEAD" }) orelse return null;
+    const b = line(gpa, io, dir, &.{ "rev-parse", "--abbrev-ref", "HEAD" }) orelse
+        return line(gpa, io, dir, &.{ "symbolic-ref", "--short", "HEAD" });
     if (!std.mem.eql(u8, b, "HEAD")) return b;
     gpa.free(b);
     return line(gpa, io, dir, &.{ "rev-parse", "--short", "HEAD" });

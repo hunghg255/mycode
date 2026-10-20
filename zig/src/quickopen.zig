@@ -293,7 +293,7 @@ pub const QuickOpen = struct {
             .commands => "run",
             .symbols => "go to",
             else => "open",
-        }, mode == .files);
+        }, "", mode == .files);
         if (field.submitted and n > 0 and mode != .line) pick = q.pickAt(q.selected);
         if (pick != null) q.dialog.close();
         return pick;
@@ -354,7 +354,7 @@ pub const QuickOpen = struct {
     }
 };
 
-fn emptyText(c: *ui.Context, msg: []const u8) void {
+pub fn emptyText(c: *ui.Context, msg: []const u8) void {
     const b = ui.div(c).wFull().px(16).py(12);
     ui.text(c, msg, .{ .size = 13, .color = c.theme.muted });
     b.end();
@@ -376,7 +376,7 @@ fn fileRow(c: *ui.Context, rel: []const u8, needle: []const u8) void {
 
 /// `s[from..end]`, with the characters the query matched in the accent,
 /// and before `group` (a command's menu) muted.
-fn matched(c: *ui.Context, s: []const u8, needle: []const u8, from: usize, end: usize, group: usize, size: f32, color: ui.Color) void {
+pub fn matched(c: *ui.Context, s: []const u8, needle: []const u8, from: usize, end: usize, group: usize, size: f32, color: ui.Color) void {
     const t = c.theme;
     var pos: [64]usize = undefined;
     const hits = positions(s, needle, &pos);
@@ -431,9 +431,9 @@ fn keycaps(c: *ui.Context, label: []const u8) void {
     }
 }
 
-/// The keys of quick open, and at its end the prefixes that make it search
+/// The keys of quick open (and the boxes like it), and at its end a tip or the prefixes that make it search
 /// something else.
-fn footer(c: *ui.Context, line: bool, open: []const u8, prefixes: bool) void {
+pub fn footer(c: *ui.Context, line: bool, open: []const u8, tip: []const u8, prefixes: bool) void {
     const t = c.theme;
     _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = t.border }, .none, null);
     const row = ui.div(c).row().wFull().h(30).px(14).gap(14).itemsCenter().bg(t.surface_hover);
@@ -456,7 +456,9 @@ fn footer(c: *ui.Context, line: bool, open: []const u8, prefixes: bool) void {
     }
     hint(c, "esc", "close");
     ui.spacer(c);
-    if (prefixes and !line) {
+    if (tip.len > 0) {
+        ui.text(c, tip, .{ .size = 11.5, .color = t.muted.alpha(0.7) });
+    } else if (prefixes and !line) {
         hint(c, ">", "commands");
         hint(c, ":", "line");
         hint(c, "@", "symbol");

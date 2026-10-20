@@ -118,6 +118,8 @@ pub const Workbench = struct {
     review_menu: ui.Menu = .{},
     indent_menu: ui.Menu = .{},
     eol_menu: ui.Menu = .{},
+    /// HEAD before a pull, to count the commits it brought.
+    head_before: ?[]u8 = null,
     /// The file the Explorer last followed (a hash of its path).
     tree_synced: u64 = 0,
     bell: bool = false,
@@ -181,6 +183,7 @@ pub const Workbench = struct {
         wb.review.deinit();
         wb.pending.deinit(wb.gpa);
         wb.confirm_arg.deinit(wb.gpa);
+        if (wb.head_before) |h| wb.gpa.free(h);
         wb.confirm_title.deinit(wb.gpa);
         wb.confirm_text.deinit(wb.gpa);
         wb.restore_branch.deinit(wb.gpa);

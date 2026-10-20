@@ -93,6 +93,13 @@ needs a `## <version>` section here, or its build fails.
   under **More Actions** beside its title; "Summary is long" with the summary's length past 50 characters; and
   tooltips on every button. A change's menu adds **Reveal in Explorer** and **Copy Path**, and a group's buttons
   open its changes.
+- The Zig build's toasts say what Git did, as the Go app's: "Committed “…” to main" with **Undo**, "Amended the
+  last commit", "Pushed main to origin/main", "Published main", "Pulled 3 commits" or "Already up to date",
+  "Created branch x at abc1234", "Stashed the changes" with **Pop**. A commit's tooltip gives its author, age and
+  short hash; the branch and stash boxes are the Go app's, with a check by the branch checked out, "Create branch
+  x from main", and every action on a stash in its menu.
+- Fixed in the Zig build: **Commit All** commits untracked files too (it left them, and failed in a new
+  repository), and a branch without commits yet shows its name rather than **No Branch**.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

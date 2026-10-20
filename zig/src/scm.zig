@@ -536,11 +536,13 @@ pub const Scm = struct {
             var acted = false;
             const all_b = ui.div(c).w(20).h(20).center().rounded(3).hover(t.surface);
             icons.sym(c, "arrow.triangle.branch", .{ .size = 10, .color = if (s.graph.all) t.accent else t.muted });
-            if (all_b.clicked()) {
+            const abi = all_b.interaction();
+            all_b.end();
+            ui.tooltip(c, abi, if (s.graph.all) "Show Current Branch Only" else "Show All Branches");
+            if (abi.clicked) {
                 ev = .{ .run = .show_all_branches };
                 acted = true;
             }
-            all_b.end();
             if (head.clicked() and !acted) {
                 s.commits_open = !s.commits_open;
                 if (s.commits_open) if (s.top) |top| s.graph.load(s.io, top);

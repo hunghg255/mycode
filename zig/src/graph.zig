@@ -211,8 +211,10 @@ pub const Graph = struct {
             ui.text(c, shortAge(c, cm.age), .{ .size = 11, .color = t.muted });
             const ri = row.interaction();
             row.end();
-            // Its author, hash, and every branch and tag.
-            ui.tooltip(c, ri, if (cm.refs.len > 0) c.print("{s}\n{s}\n{s}\n{s}", .{ cm.subject, cm.author, cm.hash, cm.refs }) else c.print("{s}\n{s}\n{s}", .{ cm.subject, cm.author, cm.hash }));
+            // As the Go app's: its subject, then its author, when, and its
+            // short hash; and every branch and tag.
+            const short = cm.hash[0..@min(7, cm.hash.len)];
+            ui.tooltip(c, ri, if (cm.refs.len > 0) c.print("{s}\n{s} · {s} · {s}\n{s}", .{ cm.subject, cm.author, cm.age, short, cm.refs }) else c.print("{s}\n{s} · {s} · {s}", .{ cm.subject, cm.author, cm.age, short }));
             if (ri.double_clicked) ev = .{ .keep = cm.hash } else if (ri.clicked) ev = .{ .open = cm.hash };
             if (ui.contextMenu(c, &g.menu, ri)) |m| {
                 defer m.end();
@@ -290,7 +292,7 @@ fn initials(c: *ui.Context, name: []const u8) []const u8 {
 }
 
 /// "3 days ago" as "3d".
-fn shortAge(c: *ui.Context, age: []const u8) []const u8 {
+pub fn shortAge(c: *ui.Context, age: []const u8) []const u8 {
     var it = std.mem.tokenizeScalar(u8, age, ' ');
     const n = it.next() orelse return age;
     const unit = it.next() orelse return age;

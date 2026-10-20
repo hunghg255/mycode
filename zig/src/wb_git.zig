@@ -68,6 +68,10 @@ fn slow(wb: *Workbench, kind: gitops.Kind, args: []const []const u8, subject: []
         else => null,
     };
     if (doing) |d| if (!worktree.docsSaved(wb, d)) return;
+    if (kind == .pull or kind == .pull_rebase or kind == .pull_merge or kind == .sync) {
+        if (wb.head_before) |h| wb.gpa.free(h);
+        wb.head_before = git.line(wb.gpa, wb.io, t, &.{ "rev-parse", "HEAD" });
+    }
     if (!wb.runner.run(kind, t, args, subject)) _ = wb.toasts.show("A Git command is running");
 }
 
@@ -180,15 +184,30 @@ pub fn commit(wb: *Workbench, all: bool, amend: bool, then_push: bool) void {
     wb.editors.saveAll();
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(wb.gpa);
+    // Every change staged first, untracked files too: `commit -a` leaves them.
+    if (all and !quick(wb, &.{ "add", "-A" })) return;
     args.appendSlice(wb.gpa, &.{"commit"}) catch return;
-    if (all) args.append(wb.gpa, "-a") catch return;
     if (amend) args.append(wb.gpa, "--amend") catch return;
     if (msg.len > 0) args.appendSlice(wb.gpa, &.{ "-m", msg }) catch return else args.append(wb.gpa, "--no-edit") catch return;
     if (quick(wb, args.items)) {
-        wb.scm.message.clear();
+        // The message is cleared once the toast has its subject.
+        defer wb.scm.message.clear();
         wb.scm.amending = false;
-        wb.toast_undo_commit = wb.toasts.showAction("Committed", "Undo");
-        if (then_push) push(wb, false);
+        if (then_push) {
+            push(wb, false);
+        } else if (amend) {
+            _ = wb.toasts.show("Amended the last commit");
+        } else {
+            // As the Go app's: its subject, cut short, and the branch.
+            const subject = std.mem.sliceTo(msg, '\n');
+            var buf: [160]u8 = undefined;
+            const cut = if (subject.len > 48) subject[0..47] else subject;
+            const text = if (wb.scm.branch) |b|
+                std.fmt.bufPrint(&buf, "Committed “{s}{s}” to {s}", .{ cut, if (subject.len > 48) "…" else "", b }) catch "Committed"
+            else
+                std.fmt.bufPrint(&buf, "Committed “{s}{s}”", .{ cut, if (subject.len > 48) "…" else "" }) catch "Committed";
+            wb.toast_undo_commit = wb.toasts.showAction(text, "Undo");
+        }
     }
 }
 
@@ -267,15 +286,39 @@ pub fn onGitDone(ctx: *anyopaque, d: gitops.Done) void {
         return;
     }
     wb.scm.setError("");
+    var buf: [256]u8 = undefined;
+    const branch = wb.scm.branch orelse "";
     switch (d.kind) {
-        .push, .publish, .force_push => _ = wb.toasts.add(.{ .title = "Pushed", .kind = .success }),
-        .pull, .pull_rebase, .pull_merge => _ = wb.toasts.add(.{ .title = "Pulled", .kind = .success }),
-        .sync => _ = wb.toasts.add(.{ .title = "Synced", .kind = .success }),
-        .fetch => _ = wb.toasts.show("Fetched"),
-        .stash => wb.toast_pop_stash = wb.toasts.showAction("Changes stashed", "Pop"),
-        .stash_pop => _ = wb.toasts.show("Stash popped"),
-        .stash_apply => _ = wb.toasts.show("Stash applied"),
-        .checkout, .create_branch => _ = wb.toasts.show("Switched branch"),
+        .push => _ = wb.toasts.show(if (wb.scm.upstream) |u| std.fmt.bufPrint(&buf, "Pushed {s} to {s}", .{ branch, u }) catch "Pushed" else std.fmt.bufPrint(&buf, "Published {s}", .{branch}) catch "Published"),
+        .publish => _ = wb.toasts.show(std.fmt.bufPrint(&buf, "Published {s}", .{branch}) catch "Published"),
+        .force_push => _ = wb.toasts.show(std.fmt.bufPrint(&buf, "Force pushed {s}", .{branch}) catch "Force pushed"),
+        .pull, .pull_rebase, .pull_merge, .sync => {
+            // How many commits the pull brought, from HEAD before it.
+            var n: usize = 0;
+            if (wb.head_before) |h| {
+                const range = std.fmt.allocPrint(wb.gpa, "{s}..HEAD", .{h}) catch "";
+                defer if (range.len > 0) wb.gpa.free(range);
+                if (top(wb)) |t| if (git.line(wb.gpa, wb.io, t, &.{ "rev-list", "--count", range })) |l| {
+                    n = std.fmt.parseInt(usize, l, 10) catch 0;
+                    wb.gpa.free(l);
+                };
+                wb.gpa.free(h);
+                wb.head_before = null;
+            }
+            if (n > 0) {
+                _ = wb.toasts.show(std.fmt.bufPrint(&buf, "Pulled {d} commit{s}", .{ n, if (n == 1) "" else "s" }) catch "Pulled");
+            } else if (d.kind != .sync) _ = wb.toasts.show("Already up to date");
+            if (d.kind == .sync) _ = wb.toasts.show(if (wb.scm.upstream) |u| std.fmt.bufPrint(&buf, "Synced {s} with {s}", .{ branch, u }) catch "Synced" else "Synced");
+        },
+        .fetch => {},
+        .stash => wb.toast_pop_stash = wb.toasts.showAction("Stashed the changes", "Pop"),
+        .stash_pop => _ = wb.toasts.show("Popped the stash"),
+        .stash_apply => _ = wb.toasts.show("Applied the stash"),
+        .checkout => {},
+        .create_branch => if (top(wb)) |t| if (git.line(wb.gpa, wb.io, t, &.{ "rev-parse", "--short", "HEAD" })) |h| {
+            defer wb.gpa.free(h);
+            _ = wb.toasts.show(std.fmt.bufPrint(&buf, "Created branch {s} at {s}", .{ d.subject, h }) catch "Created the branch");
+        },
         .continue_op => _ = wb.toasts.show("Continued"),
         .merge => _ = wb.toasts.add(.{ .title = "Merged", .kind = .success }),
         .rebase => _ = wb.toasts.add(.{ .title = "Rebased", .kind = .success }),

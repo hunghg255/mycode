@@ -85,9 +85,26 @@ pub const Picker = struct {
     }
 
     pub fn view(p: *Picker, c: *ui.Context) ?Pick {
-        const d = ui.dialog(c, &p.dialog, .{ .width = .{ .px = 560 }, .padding = .all(8), .gap = 6 }) orelse return null;
+        const d = ui.dialog(c, &p.dialog, .{ .width = .{ .px = 560 }, .padding = .all(0), .gap = 0 }) orelse return null;
         defer d.end();
+        // Under the title bar, as the Go app's.
+        d.backdropStyle().justify = .start;
+        d.backdropStyle().padding.top = c.title_bar_height + 8;
+        d.panelStyle().radius = 10;
+        d.panelStyle().clip = true;
         const t = c.theme;
+        const branches_mode = p.mode == .switch_branch or p.mode == .delete_branch;
+        const verb: []const u8 = switch (p.mode) {
+            .switch_branch => "switch",
+            .delete_branch => "delete",
+            .stash_apply => "apply",
+            .stash_pop => "pop",
+            .stash_view => "view",
+            .stash_drop => "drop",
+        };
+        // The field, with the box's icon.
+        const head = ui.div(c).row().wFull().px(14).py(10).gap(10).itemsCenter();
+        icons.sym(c, if (branches_mode) "arrow.triangle.branch" else "cube", .{ .size = 12, .color = t.muted });
         const fid = c.peekId(null);
         if (p.focus > 0) {
             if (c.focus != fid) c.changed = true;
@@ -95,65 +112,90 @@ pub const Picker = struct {
             p.focus -= 1;
         }
         const placeholder = switch (p.mode) {
-            .switch_branch => "Select a branch to check out, or type a name to create one",
-            .delete_branch => "Select a branch to delete",
-            else => "Select a stash entry",
+            .switch_branch => "Switch to a branch, or type a name to create one",
+            .delete_branch => "Choose a branch to delete",
+            else => c.print("Choose a stash to {s}", .{verb}),
         };
-        const field = ui.textField(c, &p.query, .{ .width = .fill, .placeholder = placeholder, .size = 14 });
+        const field = ui.textField(c, &p.query, .{ .width = .fill, .bare = true, .placeholder = placeholder, .size = 14, .label = placeholder });
+        head.end();
+        _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = t.border }, .none, null);
         p.filter();
         const q = std.mem.trim(u8, p.query.text(), " ");
         const creating = p.mode == .switch_branch and q.len > 0 and !p.exists(q);
         const n = p.shown.items.len + @intFromBool(creating);
-        if (c.shortcut(.{ .key = ui.Shortcut.down })) p.selected = if (n == 0) 0 else (p.selected + 1) % n;
-        if (c.shortcut(.{ .key = ui.Shortcut.up })) p.selected = if (n == 0) 0 else (p.selected + n - 1) % n;
+        if (c.shortcut(.{ .key = ui.Shortcut.down })) p.selected = if (n == 0) 0 else @min(p.selected + 1, n - 1);
+        if (c.shortcut(.{ .key = ui.Shortcut.up })) p.selected -|= 1;
         if (p.selected >= n) p.selected = 0;
+        const current = for (p.branches) |b| {
+            if (b.head) break b.name;
+        } else "";
         var pick: ?Pick = null;
-        var rows = ui.list(c, .{ .count = n, .row_height = 28, .height = .{ .px = @min(@as(f32, @floatFromInt(n)) * 28, 420) } });
-        while (rows.next()) |i| {
-            const on = i == p.selected;
-            const row = ui.div(c).row().wFull().h(28).px(8).gap(8).itemsCenter().rounded(4).bg(if (on) t.accent.alpha(0.25) else .transparent).hover(t.surface_hover);
-            if (creating and i == 0) {
-                icons.sym(c, "plus", .{ .size = 12, .color = t.muted });
-                ui.text(c, c.print("Create branch “{s}”", .{q}), .{ .size = 13 });
-            } else {
-                const k = p.shown.items[i - @intFromBool(creating)];
-                switch (p.mode) {
-                    .switch_branch, .delete_branch => {
+        if (n == 0) {
+            quickopen.emptyText(c, if (branches_mode) "No matching branches" else "No matching stashes");
+        } else {
+            var rows = ui.list(c, .{ .count = n, .row_height = 30, .height = .{ .px = @min(@as(f32, @floatFromInt(n)) * 30 + 12, 380) }, .padding = .all(6) });
+            while (rows.next()) |i| {
+                const on = i == p.selected;
+                const row = ui.div(c).row().wFull().h(30).px(10).gap(10).itemsCenter().rounded(6).bg(if (on) t.accent.alpha(0.2) else .transparent).hover(t.surface_hover);
+                if (creating and i == 0) {
+                    icons.sym(c, "plus", .{ .size = 12, .color = t.accent });
+                    ui.richText(c, c.print("Create branch {s}", .{q}), &.{.{ .start = 14, .end = @intCast(14 + q.len), .weight = .semibold }}, .{ .size = 13 });
+                    ui.spacer(c);
+                    if (current.len > 0) ui.text(c, c.print("from {s}", .{current}), .{ .size = 12, .color = t.muted.alpha(0.7) });
+                } else {
+                    const k = p.shown.items[i - @intFromBool(creating)];
+                    if (branches_mode) {
                         const b = p.branches[k];
-                        icons.sym(c, if (b.remote) "globe" else "arrow.triangle.branch", .{ .size = 12, .color = t.muted });
-                        ui.text(c, b.name, .{ .size = 13, .weight = if (b.head) .semibold else .regular });
-                        if (b.head) ui.text(c, "current", .{ .size = 11, .color = t.accent });
-                        ui.text(c, b.subject, .{ .size = 11, .color = t.muted });
-                        ui.spacer(c);
-                        ui.text(c, b.age, .{ .size = 11, .color = t.muted });
-                    },
-                    else => {
+                        // A check by the one checked out, a cloud by a remote's.
+                        icons.sym(c, if (b.head) "checkmark" else if (b.remote) "icloud.and.arrow.down" else "arrow.triangle.branch", .{ .size = 12, .color = if (b.head) t.accent else t.muted });
+                        quickopen.matched(c, b.name, q, 0, b.name.len, 0, 13, t.text);
+                        const sub = ui.div(c).grow().w(0).clip();
+                        ui.text(c, b.subject, .{ .size = 12, .color = t.muted.alpha(0.7) });
+                        sub.end();
+                        ui.text(c, @import("graph.zig").shortAge(c, b.age), .{ .size = 11.5, .color = t.muted.alpha(0.7) });
+                    } else {
                         const s = p.stashes[k];
                         ui.text(c, s[0], .{ .size = 12, .mono = true, .color = t.muted });
-                        ui.text(c, s[1], .{ .size = 13 });
-                    },
+                        const msg = ui.div(c).grow().w(0).clip();
+                        quickopen.matched(c, s[1], q, 0, s[1].len, 0, 13, t.text);
+                        msg.end();
+                    }
                 }
-            }
-            const ri = row.interaction();
-            row.end();
-            if (ri.clicked) {
-                p.selected = i;
-                pick = p.pickAt(i, creating, q);
-            }
-            if (!(creating and i == 0) and (p.mode == .switch_branch)) if (ui.contextMenu(c, &p.menu, ri)) |m| {
-                defer m.end();
-                const b = p.branches[p.shown.items[i - @intFromBool(creating)]];
-                if (m.item("Check Out", .{})) pick = .{ .checkout = b };
-                if (!b.remote) if (m.item("Rename…", .{})) {
-                    pick = .{ .rename = b };
+                const ri = row.interaction();
+                row.end();
+                if (ri.clicked) {
+                    p.selected = i;
+                    pick = p.pickAt(i, creating, q);
+                }
+                if (!(creating and i == 0)) if (ui.contextMenu(c, &p.menu, ri)) |m| {
+                    defer m.end();
+                    const k = p.shown.items[i - @intFromBool(creating)];
+                    if (branches_mode) {
+                        const b = p.branches[k];
+                        if (m.item("Check Out", .{})) pick = .{ .checkout = b };
+                        if (!b.remote) if (m.item("Rename Branch…", .{})) {
+                            pick = .{ .rename = b };
+                        };
+                        if (!b.head) if (m.item("Delete Branch…", .{})) {
+                            pick = .{ .delete = b };
+                        };
+                    } else {
+                        // Every action on a stash, as the Go app's.
+                        const name = p.stashes[k][0];
+                        const acts = [_]struct { []const u8, Mode }{ .{ "Apply", .stash_apply }, .{ "Pop", .stash_pop }, .{ "View", .stash_view }, .{ "Drop…", .stash_drop } };
+                        for (acts) |a| if (m.item(a[0], .{})) {
+                            pick = .{ .stash = .{ .mode = a[1], .name = name } };
+                        };
+                    }
                 };
-                if (!b.head) if (m.item("Delete…", .{})) {
-                    pick = .{ .delete = b };
-                };
-            };
+            }
+            rows.end();
         }
-        rows.end();
-        if (n == 0) ui.text(c, "Nothing matches.", .{ .size = 12, .color = t.muted });
+        quickopen.footer(c, false, verb, switch (p.mode) {
+            .switch_branch => "Type a new name to create a branch",
+            .delete_branch => "Remote branches are deleted on their remote",
+            else => "Right-click a stash for more",
+        }, false);
         // The Enter that chose the command opening the picker isn't its own.
         if (field.submitted and n > 0 and !p.fresh) pick = p.pickAt(p.selected, creating, q);
         p.fresh = false;
