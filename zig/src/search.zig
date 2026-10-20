@@ -309,6 +309,8 @@ pub const Search = struct {
     last_key: u64 = 0,
     focus_query: bool = false,
     selected: ?[2]usize = null,
+    /// The keys of the query go through the matches (Down came there).
+    in_results: bool = false,
     confirm: ui.OverlayState = .{},
     message: ?[]const u8 = null,
 
@@ -397,6 +399,51 @@ pub const Search = struct {
         s.focus_query = true;
     }
 
+    /// The keys of the matches while the query has the keyboard: Down
+    /// shows the next match (opening it as a preview), Up the one before
+    /// (on the first, back to the query), Enter keeps it open, Escape
+    /// leaves the matches.
+    fn matchKeys(s: *Search, c: *ui.Context) ?Event {
+        const S = ui.Shortcut;
+        if (s.in_results and (c.shortcut(.{ .key = S.escape }))) {
+            s.in_results = false;
+            s.selected = null;
+            return null;
+        }
+        var step: i32 = 0;
+        if (c.shortcut(.{ .key = S.down })) step = 1;
+        if (s.in_results and c.shortcut(.{ .key = S.up })) step = -1;
+        const keep = s.in_results and c.shortcut(.{ .key = S.enter });
+        if (step == 0 and !keep) return null;
+        // The matches in order, of the files open.
+        var flat: std.ArrayList([2]usize) = .empty;
+        for (s.results.items, 0..) |r, fi| if (r.open) for (0..r.matches.len) |k| flat.append(c.alloc(), .{ fi, k }) catch {};
+        if (flat.items.len == 0) return null;
+        var at: ?usize = null;
+        if (s.selected) |sel| for (flat.items, 0..) |f, i| if (f[0] == sel[0] and f[1] == sel[1]) {
+            at = i;
+        };
+        var to: usize = 0;
+        if (!s.in_results) {
+            s.in_results = true;
+        } else if (step < 0) {
+            if (at == null or at.? == 0) {
+                s.in_results = false;
+                s.selected = null;
+                return null;
+            }
+            to = at.? - 1;
+        } else if (step > 0) {
+            to = if (at) |a| @min(a + 1, flat.items.len - 1) else 0;
+        } else to = at orelse 0;
+        const f = flat.items[to];
+        s.selected = f;
+        const r = s.results.items[f[0]];
+        const m = r.matches[f[1]];
+        c.changed = true;
+        return .{ .open = .{ .path = r.path, .line = m.line, .col = m.col, .len = m.end - m.start, .keep = keep } };
+    }
+
     pub fn view(s: *Search, c: *ui.Context) Event {
         const t = c.theme;
         var ev: Event = .none;
@@ -416,6 +463,11 @@ pub const Search = struct {
                 c.changed = true;
                 s.focus_query = false;
             }
+            // Down from the query goes through the matches; Up on the first,
+            // or Escape, back to the query.
+            if (c.focus == qid) if (s.matchKeys(c)) |e| {
+                ev = e;
+            };
             _ = ui.textField(c, &s.query, .{ .width = .fill, .placeholder = "Search", .size = 13 });
             toggle(c, "Aa", &s.case);
             toggle(c, "ab", &s.word);
@@ -443,6 +495,9 @@ pub const Search = struct {
             if (s.message) |m| ui.text(c, m, .{ .size = 11, .color = t.danger, .wrap = true });
         }
         if (s.running) _ = c.leaf(.{ .width = .fill, .height = .{ .px = 2 }, .background = t.accent.alpha(0.6) }, .none, null);
+        // A regular expression's groups, for the replacements shown.
+        var re: ?ui.Regex = if (s.show_replace and s.regex) ui.Regex.compile(c.gpa, s.query.text(), !s.case) catch null else null;
+        defer if (re) |*r| r.deinit();
         // The results: a header for each file, a row for each match.
         var nrows: usize = 0;
         for (s.results.items) |r| nrows += 1 + (if (r.open) r.matches.len else 0);
@@ -474,6 +529,8 @@ pub const Search = struct {
                     const m = r.matches[k];
                     const on = if (s.selected) |sel| sel[0] == fi and sel[1] == k else false;
                     const row = ui.div(c).row().wFull().h(22).pl(30).pr(8).gap(0).itemsCenter().bg(if (on) t.accent.alpha(0.2) else .transparent).hover(t.surface_hover);
+                    // The line's text clips, so the line number keeps its place.
+                    const texts = ui.div(c).row().w(0).grow().clip().itemsCenter();
                     const pre = std.mem.trimStart(u8, m.text[0..m.start], " \t");
                     ui.text(c, pre, .{ .size = 12, .color = t.muted });
                     const hit = m.text[m.start..m.end];
@@ -481,21 +538,27 @@ pub const Search = struct {
                         const hb = ui.div(c).bg(t.danger.alpha(0.2));
                         ui.text(c, hit, .{ .size = 12 });
                         hb.end();
-                        const rb = ui.div(c).bg(t.success.alpha(0.25));
-                        ui.text(c, s.replacement.text(), .{ .size = 12 });
-                        rb.end();
+                        const with = if (re) |*rx| expand(c.alloc(), s.replacement.text(), rx.find(m.text, m.start), m.text) else s.replacement.text();
+                        if (with.len > 0) {
+                            const rb = ui.div(c).bg(t.success.alpha(0.25));
+                            ui.text(c, with, .{ .size = 12 });
+                            rb.end();
+                        }
                     } else {
                         const hb = ui.div(c).bg(ui.Color.hex(0xe8b86d).alpha(0.35)).rounded(2);
                         ui.text(c, hit, .{ .size = 12 });
                         hb.end();
                     }
                     ui.text(c, m.text[m.end..], .{ .size = 12, .color = t.muted });
-                    ui.spacer(c);
+                    texts.end();
                     if (s.show_replace and row.hovered()) {
                         const b = ui.div(c).w(18).h(18).center().rounded(3).hover(t.surface);
                         ui.icon(c, "arrow.clockwise", .{ .size = 9, .color = t.muted });
                         if (b.clicked()) ev = .{ .replace_match = .{ .file = fi, .match = k } };
                         b.end();
+                    } else {
+                        // Its line, to tell apart the matches of lines alike.
+                        ui.text(c, c.print("{d}", .{m.line + 1}), .{ .size = 10.5, .color = t.muted.alpha(0.7) });
                     }
                     const ia = row.interaction();
                     row.end();

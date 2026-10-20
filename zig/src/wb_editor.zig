@@ -371,6 +371,8 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
     if (d.restore_scroll) |y| if (d.editor.area.scroll_id != 0) {
         c.scroll.put(c.gpa, d.editor.area.scroll_id, y) catch {};
         d.restore_scroll = null;
+        // The rows in view are those of the last layout's scroll: again.
+        c.animationFrame();
     };
     const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight, .weight = weightOf(s.fontWeight), .weight_value = @intFromFloat(s.fontWeight), .features = s.fontFeatures });
     d.scroll_y = c.scroll.get(d.editor.area.scroll_id) orelse 0;
