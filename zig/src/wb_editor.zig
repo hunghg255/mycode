@@ -576,13 +576,25 @@ fn welcome(wb: *Workbench, c: *ui.Context) void {
         const row = ui.div(c).row().wFull().py(6).px(10).gap(10).itemsCenter().rounded(6).hover(t.surface_hover);
         icons.sym(c, "folder", .{ .size = 13, .color = t.accent });
         ui.text(c, std.fs.path.basename(r), .{ .size = 13, .color = t.text });
-        ui.text(c, std.fs.path.dirname(r) orelse "", .{ .size = 12, .color = t.muted.alpha(0.7) });
+        // The parent folder, from the home folder as "~", cut at the edge.
+        const parent = ui.div(c).w(0).grow().clip();
+        ui.text(c, shortenHome(wb, c, std.fs.path.dirname(r) orelse ""), .{ .size = 12, .color = t.muted.alpha(0.7) });
+        parent.end();
         const ri = row.interaction();
         row.end();
-        ui.tooltip(c, ri, r);
+        ui.tooltip(c, ri, shortenHome(wb, c, r));
         // Ctrl+click (⌘ on macOS): in a new window.
         if (ri.clicked) wb.shell.openFolder(r, c.input.ctrl or c.input.cmd);
     }
+}
+
+/// A path under the home folder from "~", as the Go app's `shortenHome`.
+pub fn shortenHome(wb: *Workbench, c: *ui.Context, path: []const u8) []const u8 {
+    const home = wb.shell.main.env.get("USERPROFILE") orelse wb.shell.main.env.get("HOME") orelse return path;
+    if (home.len == 0 or path.len < home.len or !std.ascii.eqlIgnoreCase(path[0..home.len], home)) return path;
+    if (path.len == home.len) return "~";
+    if (path[home.len] != '/' and path[home.len] != '\\') return path;
+    return c.print("~{s}", .{path[home.len..]});
 }
 
 /// A titled group of the welcome page, titled as the sidebar's views.

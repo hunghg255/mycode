@@ -59,6 +59,10 @@ needs a `## <version>` section here, or its build fails.
 - The Zig build's welcome page is the Go app's: the logo beside the name and "a small, quick code editor", a **Start**
   list (**Quick Open…**, **Find in Files**, **Command Palette…**, **New File**, **Toggle Terminal**, **Toggle
   Sidebar**) with their keys as keycaps, and the recent folders with their parent folders.
+- In the Zig build, the Explorer's **New File…**, **New Folder…**, **Refresh Explorer** and **Collapse Folders**
+  buttons sit on the folder's row with tooltips while the pointer is over the sidebar, and an empty folder shows
+  **This Folder Is Empty** with buttons that make the first file or folder. The welcome page writes folders under
+  the home folder from `~`.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

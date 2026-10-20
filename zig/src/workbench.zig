@@ -404,10 +404,28 @@ pub const Workbench = struct {
         wbfiles.overlays(wb, c);
     }
 
+    /// What the explorer shows of a folder with no files yet, with buttons
+    /// that make the first (the Go app's `emptyFolder`).
+    fn emptyFolder(wb: *Workbench, c: *ui.Context) void {
+        const t = c.theme;
+        const col = ui.div(c).column().wFull().pt(28).px(20).pb(8).gap(8).itemsCenter();
+        defer col.end();
+        const ring = ui.div(c).w(44).h(44).roundedFull().center().bg(t.text.alpha(0.06));
+        icons.sym(c, "folder.open", .{ .size = 17, .color = t.muted });
+        ring.end();
+        _ = c.leaf(.{ .height = .{ .px = 4 } }, .none, null);
+        ui.text(c, "This Folder Is Empty", .{ .size = 13, .weight = .semibold, .color = t.text });
+        ui.text(c, "Add a file or a folder to start.", .{ .size = 12, .color = t.muted });
+        _ = c.leaf(.{ .height = .{ .px = 4 } }, .none, null);
+        if (ui.button(c, "New File…", .{ .variant = .primary, .width = .fill, .size = 13 }).clicked) wbfiles.askNewFile(wb, wb.explorer.root, false);
+        if (ui.button(c, "New Folder…", .{ .width = .fill, .size = 13 }).clicked) wbfiles.askNewFile(wb, wb.explorer.root, true);
+    }
+
     fn sidebar(wb: *Workbench, c: *ui.Context, chrome: ui.Color) void {
         const t = c.theme;
-        ui.column(c, .{ .width = .fill, .height = .fill, .background = chrome });
-        defer ui.end(c);
+        const sb = ui.div(c).column().wFull().hFull().bg(chrome);
+        defer sb.end();
+        const sb_hovered = sb.hovered();
         {
             const head = ui.div(c).row().wFull().h(34).px(8).gap(2).itemsCenter();
             defer head.end();
@@ -429,13 +447,10 @@ pub const Workbench = struct {
                     ui.text(c, label, .{ .size = 8, .weight = .bold, .color = t.accent_text });
                     badge.end();
                 }
+                // No tooltip, as the Go app's: it would show over the title
+                // bar, and the title beside the buttons names the view.
                 const bi = b.interaction();
                 b.end();
-                ui.tooltip(c, bi, switch (v.side) {
-                    .explorer => "Explorer (Ctrl+Shift+E)",
-                    .search => "Search (Ctrl+Shift+F)",
-                    .scm => "Source Control (Ctrl+Shift+G)",
-                });
                 if (bi.clicked) run_mod.run(wb, c, switch (v.side) {
                     .explorer => .show_explorer,
                     .search => .show_search,
@@ -447,23 +462,28 @@ pub const Workbench = struct {
                 ui.text(c, v.label, .{ .size = 11, .weight = .semibold, .color = t.muted });
             };
             ui.spacer(c);
-            if (wb.side == .explorer and head.hovered()) {
-                if (panel_mod.smallButton(c, "plus.square", false)) wbfiles.askNewFile(wb, wb.explorer.targetDir(), false);
-                if (panel_mod.smallButton(c, "folder.badge.plus", false)) wbfiles.askNewFile(wb, wb.explorer.targetDir(), true);
-                if (panel_mod.smallButton(c, "arrow.clockwise", false)) run_mod.run(wb, c, .refresh_explorer);
-                if (panel_mod.smallButton(c, "rectangle.on.rectangle", false)) run_mod.run(wb, c, .collapse_folders);
-            }
         }
         switch (wb.side) {
             .explorer => {
-                // The folder's row.
-                const top = ui.div(c).row().wFull().h(22).px(10).itemsCenter();
-                // The folder's name in capitals, as the Go app heads it.
+                // The folder's row: its name in capitals, as the Go app
+                // heads it, and the explorer's actions while the pointer is
+                // over the sidebar (on the title's row they'd leave the title
+                // no room).
+                const top = ui.div(c).row().wFull().h(24).pl(16).pr(6).gap(2).itemsCenter();
                 const upper = c.print("{s}", .{wb.name()});
                 for (@constCast(upper)) |*ch| ch.* = std.ascii.toUpper(ch.*);
+                const name_box = ui.div(c).grow();
                 ui.text(c, upper, .{ .size = 11, .weight = .bold, .color = t.text });
+                name_box.end();
+                if (sb_hovered) {
+                    if (panel_mod.tipButton(c, "plus.square", "New File…")) wbfiles.askNewFile(wb, wb.explorer.targetDir(), false);
+                    if (panel_mod.tipButton(c, "folder.badge.plus", "New Folder…")) wbfiles.askNewFile(wb, wb.explorer.targetDir(), true);
+                    if (panel_mod.tipButton(c, "arrow.clockwise", "Refresh Explorer")) run_mod.run(wb, c, .refresh_explorer);
+                    if (panel_mod.tipButton(c, "rectangle.on.rectangle", "Collapse Folders")) run_mod.run(wb, c, .collapse_folders);
+                }
                 if (top.clicked()) wb.explorer.state.selected = null;
                 top.end();
+                if (wb.explorer.children(wb.explorer.root).len == 0) emptyFolder(wb, c);
                 wbfiles.explorerEvent(wb, c, wb.explorer.view(c, .hex(wb.shell.palette.faint), wb.statusColors()));
             },
             .search => {

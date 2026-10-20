@@ -353,7 +353,7 @@ pub const Panel = struct {
 };
 
 /// A button of the panel's bar, as the Go app's: 26 by 24, its tip the label.
-fn tipButton(c: *ui.Context, icon: []const u8, tip: []const u8) bool {
+pub fn tipButton(c: *ui.Context, icon: []const u8, tip: []const u8) bool {
     const b = ui.div(c).w(26).h(24).center().rounded(5).hover(c.theme.surface_hover);
     icons.sym(c, icon, .{ .size = 11.5, .color = if (b.hovered()) c.theme.text else c.theme.muted });
     const bi = b.interaction();
