@@ -97,6 +97,14 @@ pub fn uninstall(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Env
     const m = marker(gpa, data_dir);
     defer gpa.free(m);
     fs.write(io, m, "") catch {};
+    remove(gpa, io, env);
+}
+
+/// Takes the command and the menus away, as the uninstaller asks
+/// (`--uninstall-shell`): those the Go app set up too, which have the same
+/// names. Installed again, MyCode sets them up again.
+pub fn remove(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) void {
+    if (!supported) return;
     const bin = binDir(gpa, env) orelse return;
     defer gpa.free(bin);
     std.Io.Dir.cwd().deleteTree(io, bin) catch {};

@@ -21,6 +21,10 @@ const winshell = @import("winshell.zig");
 const Dialog = enum { none, folder, folder_new_window, file };
 
 pub const Shell = struct {
+    /// A project to close, and one to keep closing the others, from the
+    /// rail's menu (after the rail is built).
+    closing: ?*Workbench = null,
+    closing_others: ?*Workbench = null,
     gpa: std.mem.Allocator,
     io: std.Io,
     main: *Main,
@@ -625,11 +629,14 @@ pub const Shell = struct {
             const pc = projectColor(p, wb.root);
             const hot = sh.rail_hot == i;
             // Along the rail's edge, as the activity bar marks the view shown.
-            if (on or hot) {
+            // Always there, so the square after it keeps its id as the
+            // pointer comes and goes (its press and release are one click).
+            {
                 const pill: f32 = if (on) 20 else 8;
-                _ = c.leaf(.{ .absolute = true, .offset = .{ .x = -2, .y = (36 - pill) / 2 }, .width = .{ .px = 5 }, .height = .{ .px = pill }, .radius = 2.5, .background = if (on) t.accent else t.muted }, .none, null);
+                _ = c.leaf(.{ .absolute = true, .offset = .{ .x = -2, .y = (36 - pill) / 2 }, .width = .{ .px = 5 }, .height = .{ .px = pill }, .radius = 2.5, .background = if (on) t.accent else if (hot) t.muted else .transparent }, .none, null);
             }
-            const sq = ui.div(c).w(32).h(32).center().rounded(9).bg(pc.alpha(if (on) 0.30 else if (hot) 0.22 else 0.14)).border(if (on) pc.alpha(0.75) else .transparent);
+            // A control: its initials don't select, so the press is the square's.
+            const sq = ui.div(c).w(32).h(32).center().rounded(9).control().bg(pc.alpha(if (on) 0.30 else if (hot) 0.22 else 0.14)).border(if (on) pc.alpha(0.75) else .transparent);
             const ink = if (on or hot) pc else pc.mix(t.muted, 0.25);
             if (sh.store.s.projectIcons and !wb.logo_read) {
                 wb.logo_read = true;
@@ -648,9 +655,10 @@ pub const Shell = struct {
             const si = sq.interaction();
             if (si.hovered) sh.rail_hot = i else if (sh.rail_hot == i) sh.rail_hot = null;
             sq.end();
-            const wi = wrap.interaction();
             wrap.end();
-            if (i < sh.rail_rects.len) if (wi.rect) |r| {
+            // The square's place, for where a drag lets go (the row around it
+            // takes no pointer: on top of the square, it would take its clicks).
+            if (i < sh.rail_rects.len) if (si.rect) |r| {
                 sh.rail_rects[i] = r;
             };
             if (si.pressed and c.input.pressed and sh.rail_drag == null) sh.rail_drag = .{ .from = i, .start = c.input.mouse };
@@ -666,13 +674,31 @@ pub const Shell = struct {
                 if (i > 0) if (m.item("Move Up", .{})) sh.moveProject(i, i - 1);
                 if (i + 1 < sh.projects.items.len) if (m.item("Move Down", .{})) sh.moveProject(i, i + 1);
                 m.separator();
-                if (m.item("Close Project", .{})) wb.queue(.close_project);
-                if (m.item("Close Other Projects", .{})) {
-                    for (sh.projects.items) |o| if (o != wb) o.queue(.close_project);
-                }
+                // At once, after the frame: a project not shown runs no commands.
+                if (m.item("Close Project", .{})) sh.closing = wb;
+                if (m.item("Close Other Projects", .{})) sh.closing_others = wb;
             }
         }
         if (go) |i| if (sh.rail_drag == null or !sh.rail_drag.?.moving) sh.show(i);
+        // The projects closed from the rail's menu, once it is built.
+        if (sh.closing) |wb| {
+            sh.closing = null;
+            if (std.mem.indexOfScalar(*Workbench, sh.projects.items, wb) != null) sh.closeProject(wb);
+            c.changed = true;
+        }
+        if (sh.closing_others) |keep| {
+            sh.closing_others = null;
+            var k = sh.projects.items.len;
+            while (k > 0) {
+                k -= 1;
+                if (k >= sh.projects.items.len) continue;
+                const o = sh.projects.items[k];
+                if (o != keep) sh.closeProject(o);
+                // One asks about its changes: the rest wait.
+                if (o.close_then != .none) break;
+            }
+            c.changed = true;
+        }
         sh.railDrag(c);
         _ = c.leaf(.{ .width = .{ .px = 20 }, .height = .{ .px = 1 }, .background = .hex(p.border) }, .none, null);
         // Open Folder: a square of dashes, as the Go app draws it.

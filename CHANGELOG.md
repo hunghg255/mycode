@@ -128,6 +128,11 @@ needs a `## <version>` section here, or its build fails.
   from its icon's shapes, on the welcome page and in the status bar: blinking now and then, bobbing once in a
   while, hopping while Git or a search runs (its tooltip says what), and still while the window hasn't the
   keyboard. A first start of the Zig build takes the settings and keyboard shortcuts Mayoi had.
+- Fixed in the Zig build: a click on a project in the rail shows it (a project under the pointer took no clicks),
+  and **Close Project** and **Close Other Projects** in the rail's menu close projects not shown too. The button
+  between a Markdown or SVG file's preview and its source has an icon and its key in its tooltip.
+- Uninstalling the Zig build takes away the `mycode` command and File Explorer's **Open with MyCode** (the Go app's
+  too, which have the same names), and offers to delete MyCode's settings.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

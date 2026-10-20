@@ -327,6 +327,12 @@ pub const Main = struct {
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
+    // The uninstaller's: the command and File Explorer's menus taken away,
+    // with no window (myzig.zon's `windows.uninstall_run`).
+    for (try init.minimal.args.toSlice(init.arena.allocator())) |arg| if (std.mem.eql(u8, arg, "--uninstall-shell")) {
+        @import("winshell.zig").remove(gpa, io, init.environ_map);
+        return;
+    };
     var m: Main = undefined;
     const app = try myzig.App.create(init, .{
         .name = "MyCode",

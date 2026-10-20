@@ -6,5 +6,11 @@
     .copyright = "Copyright hunghg255",
     .icon = "resources/icon.png",
     .executable = "mycode",
-    .windows = .{ .installer = true },
+    // Uninstalling takes the `mycode` command and "Open with MyCode" away
+    // (the Go app's too), and offers to delete the settings.
+    .windows = .{
+        .installer = true,
+        .uninstall_run = "--uninstall-shell",
+        .uninstall_data = .{ "$APPDATA\\MyCode", "$LOCALAPPDATA\\MyCode" },
+    },
 }

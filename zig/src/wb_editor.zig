@@ -312,9 +312,19 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
             b.end();
         }
         ui.spacer(c);
-        if (previewable) if (ui.button(c, if (d.rendered) "Source" else "Preview", .{ .variant = .ghost, .size = 11 }).clicked) {
-            d.rendered = !d.rendered;
-        };
+        // As the Go app's: a button between the preview and the source,
+        // its icon with its name, and its key in its tooltip.
+        if (previewable) {
+            const b = ui.div(c).row().h(22).px(7).gap(5).itemsCenter().rounded(4).bg(t.surface_hover.alpha(0.6)).hover(t.surface_hover);
+            icons.sym(c, if (d.rendered) "chevron.left.forwardslash.chevron.right" else "photo", .{ .size = 10.5, .color = t.text });
+            ui.text(c, if (d.rendered) "Source" else "Preview", .{ .size = 11.5, .color = t.text });
+            const bi = b.interaction();
+            b.end();
+            const key = @import("shell.zig").Shell.keyLabel(wb.shell, c, .toggle_preview);
+            const tip = if (d.rendered) "Show Source" else "Show Preview";
+            ui.tooltip(c, bi, if (key.len > 0) c.print("{s} ({s})", .{ tip, key }) else tip);
+            if (bi.clicked) run_mod.run(wb, c, .toggle_preview);
+        }
     }
     if (d.rendered and viewer.isMarkdown(d.path)) {
         if (viewer.markdown(c, d)) |url| {
