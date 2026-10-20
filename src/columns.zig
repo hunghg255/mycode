@@ -128,6 +128,10 @@ pub const Editors = struct {
     tab_rects: std.ArrayList(TabRect) = .empty,
     /// Asked of the workbench by the tab menu.
     request: ?Request = null,
+    /// Tabs closed or replaced in this frame, freed as the next starts
+    /// (`emptyTrash`): the frame drew their names (the title, the tab
+    /// strip) and lays them out after the view.
+    trash: std.ArrayList(*Item) = .empty,
     /// What the tab menu chose that changes the columns: done after the
     /// strip, not while it goes through the tabs (a column emptied by it
     /// is freed).
@@ -178,6 +182,8 @@ pub const Editors = struct {
             e.gpa.destroy(col);
         }
         e.cols.deinit(e.gpa);
+        e.emptyTrash();
+        e.trash.deinit(e.gpa);
         if (e.reopen_dir) |d| e.gpa.free(d);
         e.tab_rects.deinit(e.gpa);
         e.ask_close.deinit(e.gpa);
@@ -272,7 +278,7 @@ pub const Editors = struct {
     pub fn add(e: *Editors, it: *Item, col_i: usize) !Loc {
         const col = e.cols.items[col_i];
         if (it.preview) for (col.items.items, 0..) |o, i| if (o.preview and !o.dirty()) {
-            o.destroy(e.gpa);
+            e.discard(o);
             col.items.items[i] = it;
             e.show(.{ .col = col_i, .idx = i });
             return .{ .col = col_i, .idx = i };
@@ -401,8 +407,19 @@ pub const Editors = struct {
             e.closed.append(e.gpa, cl) catch e.gpa.free(dp);
         } else |_| {};
         _ = e.take(l);
-        it.destroy(e.gpa);
+        e.discard(it);
         e.dropEmpty(l.col);
+    }
+
+    /// Frees a tab taken out of its column as the next frame starts.
+    pub fn discard(e: *Editors, it: *Item) void {
+        e.trash.append(e.gpa, it) catch it.destroy(e.gpa);
+    }
+
+    /// The tabs of the last frame's `discard`: at the start of a frame.
+    pub fn emptyTrash(e: *Editors) void {
+        for (e.trash.items) |it| it.destroy(e.gpa);
+        e.trash.clearRetainingCapacity();
     }
 
     /// An empty column goes, unless it is the last, or the last unlocked

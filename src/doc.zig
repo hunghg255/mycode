@@ -33,6 +33,18 @@ pub const Doc = struct {
     io: std.Io,
     /// Absolute; empty for an untitled file.
     path: []u8,
+    /// The path before the last `setPath`, freed with the next or with the
+    /// document: the frame that renamed it drew the old one.
+    old_path: []u8 = &.{},
+    /// Its symbols (functions, types, headings), of `syms_text`, made again
+    /// as the text changes (`symbols`). Each column showing a file draws its
+    /// own; one set for the window freed another column's names as it drew
+    /// them. The set before stays until the next, for a frame drawing it.
+    syms: []@import("symbols.zig").Symbol = &.{},
+    syms_text: []u8 = &.{},
+    syms_version: u64 = std.math.maxInt(u64),
+    old_syms: []@import("symbols.zig").Symbol = &.{},
+    old_syms_text: []u8 = &.{},
     /// An untitled file's name, numbered: Untitled-1, Untitled-2.
     untitled_buf: [24]u8 = undefined,
     untitled_len: u8 = 0,
@@ -120,6 +132,11 @@ pub const Doc = struct {
         d.marks.deinit(d.gpa);
         d.gpa.free(d.blocks);
         d.gpa.free(d.path);
+        d.gpa.free(d.old_path);
+        d.gpa.free(d.syms);
+        d.gpa.free(d.syms_text);
+        d.gpa.free(d.old_syms);
+        d.gpa.free(d.old_syms_text);
         d.gpa.destroy(d);
     }
 
@@ -166,9 +183,25 @@ pub const Doc = struct {
         d.mtime = fs.mtime(d.io, d.path);
     }
 
+    /// Its symbols as its text is now.
+    pub fn symbols(d: *Doc, markdown: bool) []const @import("symbols.zig").Symbol {
+        const v = d.editor.area.doc.version;
+        if (d.syms_version == v) return d.syms;
+        d.syms_version = v;
+        d.gpa.free(d.old_syms);
+        d.gpa.free(d.old_syms_text);
+        d.old_syms = d.syms;
+        d.old_syms_text = d.syms_text;
+        d.syms_text = d.text();
+        d.syms = @import("symbols.zig").find(d.gpa, d.syms_text, markdown) catch &.{};
+        return d.syms;
+    }
+
     pub fn setPath(d: *Doc, path: []const u8) !void {
-        d.gpa.free(d.path);
-        d.path = try d.gpa.dupe(u8, path);
+        const new = try d.gpa.dupe(u8, path);
+        d.gpa.free(d.old_path);
+        d.old_path = d.path;
+        d.path = new;
         d.editor.setLanguage(std.fs.path.basename(path));
         d.saved = d.editor.area.doc.version +% 1;
         d.base_read = false;

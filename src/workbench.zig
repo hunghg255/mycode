@@ -117,11 +117,6 @@ pub const Workbench = struct {
     blame_at: f64 = 0,
     blame_busy: bool = false,
     blame_tried: u64 = 0,
-    /// The file shown's symbols, made again when its text changes.
-    syms: []symbols.Symbol = &.{},
-    syms_doc: ?*doc_mod.Doc = null,
-    syms_version: u64 = std.math.maxInt(u64),
-    syms_text: []u8 = &.{},
     status_menu: ui.Menu = .{},
     review_menu: ui.Menu = .{},
     indent_menu: ui.Menu = .{},
@@ -199,8 +194,6 @@ pub const Workbench = struct {
         wb.diff_comment.deinit(wb.gpa);
         if (wb.file_drag) |fd| wb.gpa.free(fd.path);
         wb.blame.deinit(wb.gpa);
-        wb.gpa.free(wb.syms);
-        wb.gpa.free(wb.syms_text);
         if (wb.logo) |l| wb.gpa.free(l.bytes);
         wb.gpa.free(wb.root);
         wb.gpa.destroy(wb);
@@ -366,6 +359,11 @@ pub const Workbench = struct {
     }
 
     pub fn view(wb: *Workbench, c: *ui.Context) void {
+        // The tabs closed in the last frame, which nothing draws now.
+        wb.editors.emptyTrash();
+        // Quick open's `@` lists the symbols of the file with the keyboard,
+        // which its column gives again as it draws.
+        wb.quick.syms = &.{};
         const sh = wb.shell;
         const p = sh.palette;
         const t = c.theme;

@@ -186,6 +186,17 @@ const cases = [_]Case{
         .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;shortcut:ctrl+p;type:long.ts;key:enter;frames:3;drag:900,400>900,400;wheel:-1500;frames:3;visible:TypeScript" }},
     },
     .{
+        // Two columns of files with symbols: one set of symbols for the
+        // window, each column's made freed the other's breadcrumb names as
+        // it drew them, and the layout read them freed (the app crashed).
+        .name = "two columns show each file's breadcrumbs",
+        .files = &.{
+            .{ .path = "alpha/a.ts", .data = "export interface Alpha {\n  one: number;\n}\n" },
+            .{ .path = "alpha/b.ts", .data = "export interface Beta {\n  two: number;\n}\n" },
+        },
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;shortcut:ctrl+p;type:a.ts;key:enter;frames:2;shortcut:ctrl+\\;frames:2;shortcut:ctrl+p;type:b.ts;key:enter;frames:6;visible:Alpha;visible:Beta" }},
+    },
+    .{
         .name = "a merge conflict is resolved with Accept Incoming and Accept Current",
         .files = &.{
             .{ .path = "alpha/a.txt", .data = "top\nbase one\nm1\nm2\nm3\nm4\nbase two\nend\n" },

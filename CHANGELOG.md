@@ -5,6 +5,10 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Two columns showing files no longer crash the app: one set of symbols served the whole window, so each column
+  freed the other's breadcrumb names as they were drawn. Each file keeps its own symbols, and tabs closed or replaced
+  (a preview tab) are freed as the next frame starts, after the frame that drew their names.
+
 - A long line pinned above the editor as you scroll no longer pushes the minimap, the split button and the end of the
   status bar out of the window: it is cut at the editor's edge.
 

@@ -308,7 +308,7 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
             ui.text(c, part, .{ .size = 12, .color = t.muted });
         }
         var buf: [8]symbols.Symbol = undefined;
-        for (symbols.around(&buf, wb.syms, d.editor.area.caretLine())) |sy| {
+        for (symbols.around(&buf, d.syms, d.editor.area.caretLine())) |sy| {
             icons.sym(c, "chevron.right", .{ .size = 8, .color = t.muted });
             const b = ui.div(c).row().h(20).px(3).itemsCenter().rounded(3).hover(t.surface_hover);
             ui.text(c, sy.name, .{ .size = 12, .color = t.muted });
@@ -379,7 +379,7 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
     }
     // Sticky scroll: the lines opening the blocks around the first line in view.
     var buf: [4]symbols.Symbol = undefined;
-    const pinned = symbols.around(&buf, wb.syms, d.first_line);
+    const pinned = symbols.around(&buf, d.syms, d.first_line);
     // In a box of their own, there or not: the editor after them keeps its
     // id (and so its scroll) as they come and go. Its scroll changing them,
     // they flipped it back and forth every frame.
@@ -524,16 +524,11 @@ fn notes(wb: *Workbench, c: *ui.Context, d: *Doc, rel: []const u8) void {
     d.notes = list.items;
 }
 
+/// The file's symbols, for its breadcrumbs and sticky lines, and quick
+/// open's `@` when it is the file with the keyboard.
 fn updateSymbols(wb: *Workbench, d: *Doc) void {
-    const v = d.editor.area.doc.version;
-    if (wb.syms_doc == d and wb.syms_version == v) return;
-    wb.syms_doc = d;
-    wb.syms_version = v;
-    wb.gpa.free(wb.syms);
-    wb.gpa.free(wb.syms_text);
-    wb.syms_text = d.text();
-    wb.syms = symbols.find(wb.gpa, wb.syms_text, viewer.isMarkdown(d.path)) catch &.{};
-    wb.quick.syms = wb.syms;
+    const syms = d.symbols(viewer.isMarkdown(d.path));
+    if (wb.editors.currentDoc() == d) wb.quick.syms = syms;
 }
 
 /// While no tab is open, as the Go app's: the logo, the name and what it
