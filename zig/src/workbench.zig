@@ -152,6 +152,7 @@ pub const Workbench = struct {
             .review = .{ .gpa = gpa },
             .runner = .{ .gpa = gpa, .io = io },
         };
+        wb.editors.root = r;
         wb.runner.ctx = wb;
         wb.runner.on_done = wbgit.onGitDone;
         wb.runner.window = shell.window;

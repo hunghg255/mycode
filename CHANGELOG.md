@@ -69,6 +69,11 @@ needs a `## <version>` section here, or its build fails.
 - The Zig build's find widget is the Go app's: over the top right of the editor, with the arrow that shows
   **Replace**, the **Match Case**, **Match Whole Word** and **Use Regular Expression** toggles inside the field, the
   count of matches ("3 of 12", **No results** in red), icon buttons with tooltips, and **Replace** and **Replace All**.
+- The Zig build's tabs are the Go app's: the strip scrolls sideways when they don't fit and brings the tab shown
+  into view, each tab has its path as a tooltip, a file deleted on disk is struck through in red, the **Split Right**
+  and **Unlock Column** buttons end the strip, and a tab's menu has **Close Others**, **Close All**, **Move to Next
+  Column**, **Move to Previous Column** (making the column when there is none), **Show Preview**, **Reveal in File
+  Explorer** and **Copy Path**.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

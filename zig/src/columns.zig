@@ -74,6 +74,8 @@ pub const Column = struct {
     items: std.ArrayList(*Item) = .empty,
     active: usize = 0,
     locked: bool = false,
+    /// The tab last brought into view in the strip.
+    revealed: ?*const Item = null,
     /// Its width in points, but the last column's, which takes the rest.
     width: f32 = 0,
 
@@ -109,6 +111,9 @@ pub const Editors = struct {
     drag: ?Drag = null,
     /// Each column's strip and body as last laid out, for drops.
     strip_rects: [16]ui.Rect = undefined,
+    strip_menu: ui.Menu = .{},
+    /// The project's folder: tabs' tooltips are their paths from it.
+    root: []const u8 = "",
     body_rects: [16]ui.Rect = undefined,
     /// The panel as last laid out: a terminal's tab let go there goes to it.
     panel_rect: ?ui.Rect = null,
@@ -518,7 +523,7 @@ pub const Editors = struct {
     pub fn strip(e: *Editors, c: *ui.Context, ci: usize, chrome: ui.Color) void {
         const t = c.theme;
         const col = e.cols.items[ci];
-        const bar = ui.div(c).row().wFull().h(34).bg(chrome).itemsStretch();
+        const bar = ui.div(c).row().wFull().h(34).bg(chrome).itemsCenter();
         var close_at: ?usize = null;
         // The tabs' places, made again as the strips are built.
         var k: usize = e.tab_rects.items.len;
@@ -526,32 +531,75 @@ pub const Editors = struct {
             k -= 1;
             if (e.tab_rects.items[k].col == ci) _ = e.tab_rects.swapRemove(k);
         }
+        // The strip's edge along the bottom, which the tab shown breaks to
+        // join the text below it.
+        _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 33 }, .width = .fill, .height = .{ .px = 1 }, .background = t.border }, .none, null);
+        // The tabs, scrolled sideways when they don't fit.
+        c.keyed(col);
+        const tabs = ui.div(c).row().grow().h(34).itemsStretch().scrollY();
+        const tabs_id = tabs.interaction().id;
+        const tabs_rect = c.rects.get(tabs_id);
+        const focused_col = ci == e.focus;
         for (col.items.items, 0..) |it, i| {
             c.keyed(it);
             const on = i == col.active;
-            const focused_col = ci == e.focus;
-            const cell = ui.div(c).row().h(34).px(10).gap(6).itemsCenter().bg(if (on) t.background else chrome).hover(if (on) t.background else t.surface_hover);
-            if (on and focused_col) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 0 }, .width = .fill, .height = .{ .px = 2 }, .background = t.accent }, .none, null);
+            const cell = ui.div(c).row().h(34).pl(12).pr(6).gap(7).itemsCenter().borderW(0).bg(if (on) t.background else chrome);
+            const hovered = cell.hovered();
+            if (!on and hovered) _ = cell.bg(chrome.mix(t.background, 0.5));
+            // The strip's bottom edge under the tabs not shown.
+            if (!on) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 33 }, .width = .fill, .height = .{ .px = 1 }, .background = t.border }, .none, null);
+            // The accent along the top of the tab shown; faint in a column
+            // without the keyboard.
+            if (on) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 0 }, .width = .fill, .height = .{ .px = 2 }, .background = if (focused_col) t.accent else t.muted.alpha(0.4) }, .none, null);
             switch (it.body) {
                 .file => |d| icons.file(c, d.name()),
                 .image => |im| icons.file(c, std.fs.path.basename(im.path)),
-                .changes, .commit => icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .frame = 14, .color = t.muted }),
+                .changes => icons.sym(c, "diff", .{ .size = 11, .frame = 14, .color = t.warning }),
+                .commit => icons.sym(c, "commit", .{ .size = 11, .frame = 14, .color = t.accent }),
                 .terminal => icons.sym(c, "terminal", .{ .size = 11, .frame = 14, .color = t.muted }),
             }
-            ui.text(c, it.title(c), .{ .size = 13, .italic = it.preview, .color = if (on) t.text else t.muted });
-            const x = ui.div(c).w(16).h(16).center().rounded(4).hover(t.surface_hover);
-            if (it.dirty() and !cell.hovered()) {
-                _ = c.leaf(.{ .width = .{ .px = 7 }, .height = .{ .px = 7 }, .radius = 4, .background = t.text }, .none, null);
-            } else if (cell.hovered() or on) {
-                icons.sym(c, "xmark", .{ .size = 9, .color = t.muted });
+            const gone = switch (it.body) {
+                .file => |d| d.disk_gone,
+                else => false,
+            };
+            const name_box = ui.div(c).maxW(220).clip();
+            ui.text(c, it.title(c), .{ .size = 12.5, .italic = it.preview, .weight = if (on and !gone) .medium else .regular, .color = if (gone) t.danger else if (on) t.text else t.muted });
+            // Deleted on disk: struck through.
+            if (gone) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 9 }, .width = .fill, .height = .{ .px = 1 }, .background = t.danger }, .none, null);
+            name_box.end();
+            // The dot of unsaved changes turns into the cross under the pointer.
+            const x = ui.div(c).w(18).h(18).center().rounded(4).hover(t.surface_hover);
+            const x_hovered = x.hovered();
+            if (it.dirty() and !x_hovered) {
+                _ = c.leaf(.{ .width = .{ .px = 8 }, .height = .{ .px = 8 }, .radius = 4, .background = t.text.alpha(0.7) }, .none, null);
+            } else if (on or hovered or x_hovered) {
+                icons.sym(c, "xmark", .{ .size = 10, .color = t.muted });
             }
-            const x_clicked = x.clicked();
+            const xi = x.interaction();
             x.end();
+            ui.tooltip(c, xi, c.print("Close {s}", .{it.title(c)}));
             const ia = cell.interaction();
             cell.end();
-            if (ia.rect) |r| e.tab_rects.append(e.gpa, .{ .col = ci, .idx = i, .rect = r }) catch {};
+            // A line between the tabs.
+            _ = c.leaf(.{ .width = .{ .px = 1 }, .height = .fill, .background = t.border }, .none, null);
+            if (!xi.hovered) ui.tooltip(c, ia, switch (it.body) {
+                .terminal => "Terminal",
+                else => if (it.path()) |p| (if (e.root.len > 0) fs.relative(e.root, p) else p) else it.title(c),
+            });
+            if (ia.rect) |r| {
+                e.tab_rects.append(e.gpa, .{ .col = ci, .idx = i, .rect = r }) catch {};
+                // Bring the tab shown into view, once as it is chosen.
+                if (on and col.revealed != it) if (tabs_rect) |tr| {
+                    const now = c.scroll.get(tabs_id) orelse 0;
+                    const left = r.x - tr.x + now;
+                    const to = if (left < now) left else if (left + r.w > now + tr.w) left + r.w - tr.w else now;
+                    c.scroll.put(c.gpa, tabs_id, @max(0, to)) catch {};
+                    col.revealed = it;
+                    if (to != now) c.changed = true;
+                };
+            }
             // The middle button closes a tab, as in browsers.
-            if (x_clicked or (ia.hovered and c.input.middle_pressed)) {
+            if (xi.clicked or (ia.hovered and c.input.middle_pressed)) {
                 close_at = i;
             } else if (ia.double_clicked) {
                 it.preview = false;
@@ -565,61 +613,105 @@ pub const Editors = struct {
                 e.tabMenu(c, m, it);
             }
         }
-        // The rest of the strip: the column's lock.
-        ui.spacer(c);
-        if (col.locked) {
-            const lk = ui.div(c).row().h(34).px(8).gap(4).itemsCenter().hover(t.surface_hover);
-            icons.sym(c, "hand.raised", .{ .size = 11, .color = t.muted });
-            ui.text(c, "Locked", .{ .size = 11, .color = t.muted });
-            if (lk.clicked()) col.locked = false;
-            lk.end();
-        }
+        tabs.end();
+        // The column's lock and splitting it.
+        const tools = ui.div(c).row().pl(4).pr(6).gap(2).itemsCenter();
+        if (col.locked) if (toolButton(c, "lock", "Unlock Column")) {
+            col.locked = false;
+            c.changed = true;
+        };
+        if (toolButton(c, "columns", "Split Right (Ctrl+\\)")) if (col.items.items.len > 0) e.splitRight(.{ .col = ci, .idx = @min(col.active, col.items.items.len - 1) });
+        tools.end();
         const bi = bar.interaction();
         bar.end();
         if (ci < e.strip_rects.len) if (bi.rect) |r| {
             e.strip_rects[ci] = r;
         };
+        // The strip's own menu, past the tabs: the column's lock.
+        if (ui.contextMenu(c, &e.strip_menu, bi)) |m| {
+            defer m.end();
+            if (m.item(if (col.locked) "Unlock Column" else "Lock Column", .{})) col.locked = !col.locked;
+            c.changed = true;
+        }
         if (close_at) |i| {
             e.close(.{ .col = ci, .idx = i });
             c.changed = true;
         }
     }
 
+    fn toolButton(c: *ui.Context, icon: []const u8, tip: []const u8) bool {
+        const b = ui.div(c).w(26).h(24).center().rounded(4).hover(c.theme.surface_hover);
+        icons.sym(c, icon, .{ .size = 11.5, .color = if (b.hovered()) c.theme.text else c.theme.muted });
+        const bi = b.interaction();
+        b.end();
+        ui.tooltip(c, bi, tip);
+        return bi.clicked;
+    }
+
+    /// Moves a tab to the column beside it, `by` one right or left, making
+    /// that column when there is none (the Go app's `moveTabBy`).
+    fn moveBy(e: *Editors, l: Loc, right: bool) void {
+        if (right) {
+            if (l.col + 1 >= e.cols.items.len) {
+                const ni = e.addColumn(l.col + 1) catch return;
+                return e.move(l, ni, null);
+            }
+            return e.move(l, l.col + 1, null);
+        }
+        if (l.col == 0) {
+            _ = e.addColumn(0) catch return;
+            return e.move(.{ .col = 1, .idx = l.idx }, 0, null);
+        }
+        e.move(l, l.col - 1, null);
+    }
+
     fn tabMenu(e: *Editors, c: *ui.Context, m: *ui.MenuPanel, it: *Item) void {
         const l = e.menu_at;
+        const col = e.cols.items[l.col];
+        const alone = col.items.items.len < 2;
         if (m.item("Close", .{ .shortcut = ui.keys.label("⌘W") })) {
             e.close(l);
             c.changed = true;
             return;
         }
-        if (m.item("Close Others", .{})) e.closeWhere(l.col, it, .others);
-        if (m.item("Close to the Right", .{})) e.closeWhere(l.col, it, .right);
-        if (m.item("Close Saved", .{})) e.closeWhere(l.col, null, .saved);
+        if (m.item("Close Others", .{ .disabled = alone })) e.closeWhere(l.col, it, .others);
+        if (m.item("Close All", .{})) e.closeWhere(l.col, null, .all);
         m.separator();
-        if (m.item("Keep Open", .{ .disabled = !it.preview })) it.preview = false;
-        if (m.item("Split Right", .{ .shortcut = ui.keys.label("⌘\\") })) e.splitRight(l);
-        if (l.col + 1 < e.cols.items.len) if (m.item("Move to Right Column", .{})) e.move(l, l.col + 1, null);
-        if (l.col > 0) if (m.item("Move to Left Column", .{})) e.move(l, l.col - 1, null);
-        const col = e.cols.items[l.col];
         if (m.item(if (col.locked) "Unlock Column" else "Lock Column", .{})) col.locked = !col.locked;
+        if (m.item("Split Right", .{ .shortcut = ui.keys.label("⌘\\") })) e.splitRight(l);
+        if (m.item("Move to Next Column", .{ .disabled = alone and l.col + 1 == e.cols.items.len })) e.moveBy(l, true);
+        if (m.item("Move to Previous Column", .{ .disabled = alone and l.col == 0 })) e.moveBy(l, false);
         switch (it.body) {
             .terminal => |t| {
-                m.separator();
-                if (m.item("Move Terminal to Panel", .{})) {
-                    _ = e.take(l);
-                    e.gpa.destroy(it);
-                    e.request = .{ .to_panel = t };
-                } else if (!col.locked and m.item("Move Terminal to Locked Right Column", .{})) {
+                if (!col.locked) if (m.item("Move to Locked Right Column", .{})) {
                     _ = e.take(l);
                     e.gpa.destroy(it);
                     e.request = .{ .to_locked = t };
+                };
+                if (m.item("Move to Panel", .{})) {
+                    _ = e.take(l);
+                    e.gpa.destroy(it);
+                    e.request = .{ .to_panel = t };
                 }
             },
-            else => if (it.path()) |p| {
+            else => {
                 m.separator();
-                if (m.item("Copy Path", .{})) e.request = .{ .copy_path = p };
-                if (m.item("Reveal in Explorer", .{})) e.request = .{ .reveal = p };
-                if (m.item("Open Changes", .{})) e.request = .{ .open_changes = p };
+                const p = it.path();
+                switch (it.body) {
+                    .file => |d| if (@import("viewer.zig").isMarkdown(d.path) or @import("viewer.zig").isSvg(d.path)) {
+                        if (m.item(if (d.rendered) "Show Source" else "Show Preview", .{})) {
+                            d.rendered = !d.rendered;
+                            if (it.rendered != null) it.rendered = d.rendered;
+                        }
+                    },
+                    else => {},
+                }
+                if (p) |path| if (m.item("Open Changes", .{})) {
+                    e.request = .{ .open_changes = path };
+                };
+                if (m.item("Reveal in Explorer", .{ .disabled = p == null })) e.request = .{ .reveal = p.? };
+                if (m.item("Reveal in File Explorer", .{ .disabled = p == null })) myzig.shell.showInFolder(p.?);
+                if (m.item("Copy Path", .{ .disabled = p == null })) e.request = .{ .copy_path = p.? };
             },
         }
         c.changed = true;
