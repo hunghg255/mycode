@@ -128,8 +128,38 @@ pub const Editors = struct {
     tab_rects: std.ArrayList(TabRect) = .empty,
     /// Asked of the workbench by the tab menu.
     request: ?Request = null,
+    /// What the tab menu chose that changes the columns: done after the
+    /// strip, not while it goes through the tabs (a column emptied by it
+    /// is freed).
+    menu_op: ?MenuOp = null,
     /// The folder of the terminal `reopen_terminal` asks for, owned.
     reopen_dir: ?[]u8 = null,
+
+    pub const MenuOp = union(enum) {
+        close: Loc,
+        close_where: struct { col: usize, keep: ?*Item, which: enum { others, all } },
+        split: Loc,
+        move: struct { l: Loc, right: bool },
+        out: struct { l: Loc, locked: bool },
+    };
+
+    fn runMenuOp(e: *Editors, op: MenuOp) void {
+        switch (op) {
+            .close => |l| e.close(l),
+            .close_where => |w| switch (w.which) {
+                .others => e.closeWhere(w.col, w.keep, .others),
+                .all => e.closeWhere(w.col, null, .all),
+            },
+            .split => |l| e.splitRight(l),
+            .move => |mv| e.moveBy(mv.l, mv.right),
+            .out => |o| {
+                const it = e.take(o.l);
+                const t = it.body.terminal;
+                e.gpa.destroy(it);
+                e.request = if (o.locked) .{ .to_locked = t } else .{ .to_panel = t };
+            },
+        }
+    }
 
     pub const Request = union(enum) { reveal: []const u8, open_changes: []const u8, to_panel: *Term, to_locked: *Term, copy_path: []const u8, new_terminal_in: usize, reopen_terminal: Loc };
 
@@ -665,6 +695,11 @@ pub const Editors = struct {
             e.close(.{ .col = ci, .idx = i });
             c.changed = true;
         }
+        if (e.menu_op) |op| {
+            e.menu_op = null;
+            e.runMenuOp(op);
+            c.changed = true;
+        }
     }
 
     fn toolButton(c: *ui.Context, icon: []const u8, tip: []const u8) bool {
@@ -698,29 +733,23 @@ pub const Editors = struct {
         const col = e.cols.items[l.col];
         const alone = col.items.items.len < 2;
         if (m.item("Close", .{ .shortcut = ui.keys.label("⌘W") })) {
-            e.close(l);
+            e.menu_op = .{ .close = l };
             c.changed = true;
             return;
         }
-        if (m.item("Close Others", .{ .disabled = alone })) e.closeWhere(l.col, it, .others);
-        if (m.item("Close All", .{})) e.closeWhere(l.col, null, .all);
+        if (m.item("Close Others", .{ .disabled = alone })) e.menu_op = .{ .close_where = .{ .col = l.col, .keep = it, .which = .others } };
+        if (m.item("Close All", .{})) e.menu_op = .{ .close_where = .{ .col = l.col, .keep = null, .which = .all } };
         m.separator();
         if (m.item(if (col.locked) "Unlock Column" else "Lock Column", .{})) col.locked = !col.locked;
-        if (m.item("Split Right", .{ .shortcut = ui.keys.label("⌘\\") })) e.splitRight(l);
-        if (m.item("Move to Next Column", .{ .disabled = alone and l.col + 1 == e.cols.items.len })) e.moveBy(l, true);
-        if (m.item("Move to Previous Column", .{ .disabled = alone and l.col == 0 })) e.moveBy(l, false);
+        if (m.item("Split Right", .{ .shortcut = ui.keys.label("⌘\\") })) e.menu_op = .{ .split = l };
+        if (m.item("Move to Next Column", .{ .disabled = alone and l.col + 1 == e.cols.items.len })) e.menu_op = .{ .move = .{ .l = l, .right = true } };
+        if (m.item("Move to Previous Column", .{ .disabled = alone and l.col == 0 })) e.menu_op = .{ .move = .{ .l = l, .right = false } };
         switch (it.body) {
-            .terminal => |t| {
+            .terminal => {
                 if (!col.locked) if (m.item("Move to Locked Right Column", .{})) {
-                    _ = e.take(l);
-                    e.gpa.destroy(it);
-                    e.request = .{ .to_locked = t };
+                    e.menu_op = .{ .out = .{ .l = l, .locked = true } };
                 };
-                if (m.item("Move to Panel", .{})) {
-                    _ = e.take(l);
-                    e.gpa.destroy(it);
-                    e.request = .{ .to_panel = t };
-                }
+                if (m.item("Move to Panel", .{})) e.menu_op = .{ .out = .{ .l = l, .locked = false } };
             },
             else => {
                 m.separator();

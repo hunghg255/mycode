@@ -5,6 +5,9 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- **Split Right**, **Move to Next Column**, **Move to Panel** and **Close** in a terminal tab's menu no longer quit
+  the app: they emptied its column while the tab strip still drew it.
+
 - The Changes tab no longer stutters while files change on disk: Git's status, the commits and each file's two sides
   are read in the background, and a file read before keeps its diff while it is read again, rather than showing
   **Reading…** and moving the list. Coming back to the window no longer waits for Git either.

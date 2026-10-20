@@ -158,6 +158,18 @@ const cases = [_]Case{
         .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;live:1;" ++ palette ++ "Open All Changes;key:enter;live:2;move:first line changed;move:second line changed" }},
     },
     .{
+        // The tab menu's Split Right, Move to Next Column and Move to Panel
+        // empty the terminal's column: once, they freed it as the tab strip
+        // still drew it. (The terminal's tab is the only one, at 402,56.)
+        .name = "a terminal tab splits right and moves from its tab menu",
+        .files = files_ab,
+        .runs = &.{
+            .{ .open = &.{"alpha"}, .script = "frames:3;" ++ palette ++ "New Terminal in Editor Area;key:enter;live:2;rclick:402,56;click:Split Right;live:1" },
+            .{ .open = &.{"alpha"}, .script = "frames:3;" ++ palette ++ "New Terminal in Editor Area;key:enter;live:2;rclick:402,56;click:Move to Next Column;live:1" },
+            .{ .open = &.{"alpha"}, .script = "frames:3;" ++ palette ++ "New Terminal in Editor Area;key:enter;live:2;rclick:402,56;click:Move to Panel;live:1;move:TERMINAL" },
+        },
+    },
+    .{
         .name = "a merge conflict is resolved with Accept Incoming and Accept Current",
         .files = &.{
             .{ .path = "alpha/a.txt", .data = "top\nbase one\nm1\nm2\nm3\nm4\nbase two\nend\n" },
