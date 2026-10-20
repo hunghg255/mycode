@@ -42,15 +42,8 @@ pub fn keys(wb: *Workbench, c: *ui.Context) void {
         .has_selection = if (doc) |d| d.editor.area.sel.anchor != d.editor.area.sel.caret else false,
     };
     if (sh.keymap.match(c, cx)) |b| {
-        switch (b.action) {
-            .run => if (b.cmd) |cmd| run_mod.run(wb, c, cmd),
-            .type_text => if (doc) |d| d.editor.area.insert(b.text),
-            .send_sequence => wbfiles.sendToTerminal(wb, b.text),
-            .open => {
-                const p = if (std.fs.path.isAbsolute(b.text)) c.print("{s}", .{b.text}) else std.fs.path.join(c.alloc(), &.{ wb.root, b.text }) catch return;
-                wbfiles.openPath(wb, p, false);
-            },
-        }
+        // runCommands' steps run in order, each on what the last left.
+        for (b.steps) |st| runStep(wb, c, st);
         c.changed = true;
         return;
     }
@@ -99,6 +92,25 @@ pub fn keys(wb: *Workbench, c: *ui.Context) void {
         .{ .{ .key = 'o', .cmd = true, .shift = true }, .go_to_symbol },
     };
     for (table) |e| if (c.shortcut(e[0])) return run_mod.run(wb, c, e[1]);
+}
+
+/// A step of a binding: a command, text typed or sent, a file opened.
+fn runStep(wb: *Workbench, c: *ui.Context, st: keymap.Step) void {
+    switch (st.action) {
+        .run => if (st.cmd) |cmd| run_mod.run(wb, c, cmd),
+        .type_text => if (wb.editors.currentDoc()) |d| d.editor.area.insert(st.text),
+        .send_sequence => wbfiles.sendToTerminal(wb, st.text),
+        .open => {
+            var p = st.text;
+            if (std.mem.startsWith(u8, p, "~/") or std.mem.startsWith(u8, p, "~\\")) {
+                const home = wb.shell.main.env.get("USERPROFILE") orelse wb.shell.main.env.get("HOME") orelse "";
+                p = std.fs.path.join(c.alloc(), &.{ home, p[2..] }) catch return;
+            } else if (!std.fs.path.isAbsolute(p)) {
+                p = std.fs.path.join(c.alloc(), &.{ wb.root, p }) catch return;
+            }
+            wbfiles.openPath(wb, p, false);
+        },
+    }
 }
 
 /// A terminal of the panel or of a tab has the keyboard.
@@ -217,15 +229,34 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
                 ch.versions = versions;
                 ch.list.follow(wbgit.reader(wb));
             }
-            ch.list.layout = if (std.mem.eql(u8, wb.shell.store.s.diffLayout, "split")) .split else if (std.mem.eql(u8, wb.shell.store.s.diffLayout, "inline")) .inline_ else ch.list.layout;
-            wbgit.diffEvent(wb, c, &ch.list, ch.list.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette)));
+            diffList(wb, c, &ch.list, chrome);
         },
         .commit => |cv| {
             cv.header(c, chrome);
-            wbgit.diffEvent(wb, c, &cv.list, cv.list.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette)));
+            diffList(wb, c, &cv.list, chrome);
         },
         .terminal => |t| t.view(c),
     }
+}
+
+/// A list of diffs in the layout, font and colors of the settings; the
+/// Layout button's choice is kept in them.
+fn diffList(wb: *Workbench, c: *ui.Context, dl: *@import("difflist.zig").DiffList, chrome: ui.Color) void {
+    const st = wb.shell.store;
+    const want = st.s.diffLayout;
+    dl.layout = if (std.mem.eql(u8, want, "split")) .split else if (std.mem.eql(u8, want, "inline")) .inline_ else .auto;
+    dl.features = st.s.fontFeatures;
+    dl.weight = @intFromFloat(st.s.fontWeight);
+    const ev = dl.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette));
+    if (dl.layout_chosen) {
+        dl.layout_chosen = false;
+        st.setString("diffLayout", switch (dl.layout) {
+            .auto => "",
+            .split => "split",
+            .inline_ => "inline",
+        });
+    }
+    wbgit.diffEvent(wb, c, dl, ev);
 }
 
 fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
@@ -311,7 +342,7 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
         if (b.clicked()) d.editor.goToLine(sy.line + 1);
         b.end();
     };
-    const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight, .weight = weightOf(s.fontWeight) });
+    const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight, .weight = weightOf(s.fontWeight), .weight_value = @intFromFloat(s.fontWeight), .features = s.fontFeatures });
     d.first_line = r.first_line;
     d.last_line = r.last_line;
     // A mark clicked in the gutter shows the change as HEAD had it.
@@ -590,7 +621,7 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
     const doc = wb.editors.currentDoc();
     if (doc) |d| blame(wb, c, d);
     ui.spacer(c);
-    if (wb.shell.keymap.pending != null) ui.text(c, "(chord: waiting for a second key)", .{ .size = 11, .color = t.accent });
+    if (wb.shell.keymap.chord_len > 0) ui.text(c, c.print("({s}) was pressed. Waiting for the next key…", .{wb.shell.keymap.chordText(c)}), .{ .size = 11, .color = t.accent });
     const d = doc orelse return;
     const ta = &d.editor.area;
     const line = ta.caretLine();

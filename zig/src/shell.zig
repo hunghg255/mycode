@@ -44,6 +44,12 @@ pub const Shell = struct {
     rain: @import("rain.zig").Rain = .{},
     /// The window has the keyboard (the rain moves only then).
     has_focus: bool = true,
+    /// The family of `fontFamily`'s list that is installed, for the
+    /// settings' version it was looked for in.
+    mono_family: ?[]const u8 = null,
+    /// The keybindings.json load whose errors were told.
+    keys_told: u32 = 0,
+    mono_version: u64 = 0,
     /// Where the pointer was last seen over the window (where files dropped).
     last_mouse: ui.Point = .{ .x = -1, .y = -1 },
 
@@ -318,6 +324,36 @@ pub const Shell = struct {
         return true;
     }
 
+    /// Says once what of keybindings.json couldn't be read.
+    fn tellKeyErrors(sh: *Shell) void {
+        const k = sh.keymap;
+        if (k.loads == sh.keys_told) return;
+        sh.keys_told = k.loads;
+        if (k.errors.len == 0) return;
+        const wb = sh.active() orelse return;
+        var msg: std.ArrayList(u8) = .empty;
+        defer msg.deinit(sh.gpa);
+        for (k.errors, 0..) |e, i| {
+            if (i > 0) msg.appendSlice(sh.gpa, "; ") catch {};
+            msg.appendSlice(sh.gpa, e) catch {};
+        }
+        wb.toastError("keybindings.json: MyCode doesn't know", msg.items);
+    }
+
+    /// The first family of a CSS-like list ("JetBrains Mono, Consolas,
+    /// monospace") that is installed; null for the system's monospace.
+    fn installedFamily(c: *ui.Context, list: []const u8) ?[]const u8 {
+        var it = std.mem.splitScalar(u8, list, ',');
+        while (it.next()) |raw| {
+            const fam = std.mem.trim(u8, raw, " '\"");
+            if (fam.len == 0) continue;
+            if (std.ascii.eqlIgnoreCase(fam, "monospace")) return null;
+            const TS = @TypeOf(c.text.*);
+            if (!@hasDecl(TS, "familyInstalled") or c.text.familyInstalled(fam)) return fam;
+        }
+        return null;
+    }
+
     fn applyTheme(sh: *Shell, c: *ui.Context) void {
         const s = sh.store.s;
         // The window's own light or dark (the system's), before the theme's.
@@ -325,9 +361,19 @@ pub const Shell = struct {
         sh.palette = themes.palette(s.theme, dark);
         @import("icons.zig").palette = sh.palette;
         @import("icons.zig").lucide_theme = std.mem.eql(u8, s.iconTheme, "lucide");
-        const fam = std.mem.trim(u8, std.mem.sliceTo(s.fontFamily, ','), " ");
-        const mono: ?[]const u8 = if (std.ascii.eqlIgnoreCase(fam, "monospace") or fam.len == 0) null else fam;
-        ui.themes.apply(c, themes.uiTheme(sh.palette, mono));
+        if (sh.mono_version != sh.store.version) {
+            sh.mono_version = sh.store.version;
+            sh.mono_family = installedFamily(c, s.fontFamily);
+        }
+        ui.themes.apply(c, themes.uiTheme(sh.palette, sh.mono_family));
+        // The terminals' font: its own family, else the editor's.
+        sh.host.font = .{
+            .size = if (s.terminalFontSize > 0) s.terminalFontSize else s.fontSize - 0.5,
+            .family = if (s.terminalFontFamily.len > 0) (installedFamily(c, s.terminalFontFamily) orelse sh.mono_family) else sh.mono_family,
+            .features = s.fontFeatures,
+            .weight = @intFromFloat(s.fontWeight),
+            .copy_on_select = s.terminalCopyOnSelect,
+        };
     }
 
     fn updateTitle(sh: *Shell) void {
@@ -348,6 +394,7 @@ pub const Shell = struct {
         if (c.input.mouse.x > -1e5) sh.last_mouse = c.input.mouse;
         if (sh.store.reload()) {}
         sh.main.menuIfChanged();
+        sh.tellKeyErrors();
         sh.applyTheme(c);
         sh.updateTitle();
         ui.row(c, .{ .width = .fill, .height = .fill, .align_items = .stretch, .background = .hex(sh.palette.editor) });

@@ -21,15 +21,21 @@ pub const Key = struct {
 };
 
 pub const Binding = struct {
-    keys: [2]Key,
-    len: u8,
-    /// The command, or null for one taken away ("-command").
+    /// One key, or a chord of up to four.
+    keys: []const Key,
+    /// The command of a binding that runs one, or is taken away ("-command").
     cmd: ?Cmd,
     remove: bool = false,
     when: []const u8 = "",
-    /// `type` and `sendSequence`'s text.
-    text: []const u8 = "",
+    /// What it does: one step, or runCommands' list.
+    steps: []const Step = &.{},
+};
+
+pub const Step = struct {
     action: Action = .run,
+    cmd: ?Cmd = null,
+    /// `type` and `sendSequence`'s text, `vscode.open`'s path.
+    text: []const u8 = "",
 };
 
 pub const Action = enum { run, type_text, send_sequence, open };
@@ -45,13 +51,18 @@ pub const Context = struct {
     has_selection: bool = false,
 };
 
+pub const max_chord = 4;
+
 pub const Keymap = struct {
     arena: std.heap.ArenaAllocator,
     bindings: []Binding = &.{},
-    /// The first key of a chord, waiting for its second.
-    pending: ?Key = null,
-    /// Keys and conditions the file had that weren't understood.
+    /// The keys of a chord typed so far, waiting for the next.
+    chord: [max_chord]Key = undefined,
+    chord_len: usize = 0,
+    /// Keys and commands the file had that weren't understood.
     errors: []const []const u8 = &.{},
+    /// Bumped by each load, so the window says once what failed.
+    loads: u32 = 0,
 
     pub fn init(gpa: std.mem.Allocator) Keymap {
         return .{ .arena = .init(gpa) };
@@ -65,51 +76,67 @@ pub const Keymap = struct {
         _ = k.arena.reset(.retain_capacity);
         const a = k.arena.allocator();
         k.bindings = &.{};
+        k.errors = &.{};
+        k.chord_len = 0;
+        k.loads +%= 1;
+        var errs: std.ArrayList([]const u8) = .empty;
+        defer k.errors = errs.items;
         const clean = stripJsonc(a, data) catch return;
-        const v = std.json.parseFromSliceLeaky(std.json.Value, a, clean, .{}) catch return;
+        const v = std.json.parseFromSliceLeaky(std.json.Value, a, clean, .{}) catch {
+            errs.append(a, "it isn't a JSON list") catch {};
+            return;
+        };
         if (v != .array) return;
         var list: std.ArrayList(Binding) = .empty;
-        var errs: std.ArrayList([]const u8) = .empty;
         for (v.array.items) |e| {
             if (e != .object) continue;
             const key = e.object.get("key") orelse continue;
             const command = e.object.get("command") orelse continue;
             if (key != .string or command != .string) continue;
-            var b: Binding = .{ .keys = undefined, .len = 0, .cmd = null };
+            var keys: std.ArrayList(Key) = .empty;
             var it = std.mem.tokenizeScalar(u8, key.string, ' ');
             var ok = true;
             while (it.next()) |part| {
-                if (b.len == 2) break;
-                b.keys[b.len] = parseKey(part) orelse {
+                if (keys.items.len == max_chord) break;
+                const one = parseKey(part) orelse {
                     ok = false;
                     break;
                 };
-                b.len += 1;
+                keys.append(a, one) catch {};
             }
-            if (!ok or b.len == 0) {
-                errs.append(a, a.dupe(u8, key.string) catch "") catch {};
+            if (!ok or keys.items.len == 0) {
+                errs.append(a, std.fmt.allocPrint(a, "the key \"{s}\"", .{key.string}) catch "") catch {};
                 continue;
             }
+            var b: Binding = .{ .keys = keys.items, .cmd = null };
             var cmd_name = command.string;
             if (std.mem.startsWith(u8, cmd_name, "-")) {
                 b.remove = true;
                 cmd_name = cmd_name[1..];
             }
-            if (std.mem.eql(u8, cmd_name, "type") or std.mem.eql(u8, cmd_name, "workbench.action.terminal.sendSequence")) {
-                b.action = if (std.mem.eql(u8, cmd_name, "type")) .type_text else .send_sequence;
-                if (e.object.get("args")) |args| if (args == .object) if (args.object.get("text")) |t| if (t == .string) {
-                    b.text = t.string;
+            const args = e.object.get("args");
+            if (std.mem.eql(u8, cmd_name, "runCommands")) {
+                var steps: std.ArrayList(Step) = .empty;
+                if (args) |ar| if (ar == .object) if (ar.object.get("commands")) |cs| if (cs == .array) for (cs.array.items) |one| {
+                    const cmd_of = switch (one) {
+                        .string => |n| n,
+                        .object => |o| if (o.get("command")) |n| (if (n == .string) n.string else continue) else continue,
+                        else => continue,
+                    };
+                    const step_args = if (one == .object) one.object.get("args") else null;
+                    const step = stepOf(cmd_of, step_args) orelse {
+                        errs.append(a, std.fmt.allocPrint(a, "the command \"{s}\"", .{cmd_of}) catch "") catch {};
+                        continue;
+                    };
+                    steps.append(a, step) catch {};
                 };
-            } else if (std.mem.eql(u8, cmd_name, "vscode.open")) {
-                b.action = .open;
-                if (e.object.get("args")) |args| if (args == .string) {
-                    b.text = args.string;
-                };
+                b.steps = steps.items;
+            } else if (stepOf(cmd_name, args)) |step| {
+                b.cmd = step.cmd;
+                b.steps = a.dupe(Step, &.{step}) catch &.{};
             } else {
-                b.cmd = commandFor(cmd_name) orelse {
-                    errs.append(a, a.dupe(u8, cmd_name) catch "") catch {};
-                    continue;
-                };
+                errs.append(a, std.fmt.allocPrint(a, "the command \"{s}\"", .{cmd_name}) catch "") catch {};
+                continue;
             }
             if (e.object.get("when")) |w| if (w == .string) {
                 b.when = w.string;
@@ -117,45 +144,54 @@ pub const Keymap = struct {
             list.append(a, b) catch {};
         }
         k.bindings = list.items;
-        k.errors = errs.items;
     }
 
-    /// The binding this event's key completes, if any; chords wait for their
-    /// second key. Takes the key.
+    /// The binding this event's key completes, if any; chords wait for
+    /// their next key. Takes the key.
     pub fn match(k: *Keymap, c: *ui.Context, cx: Context) ?*const Binding {
         if (k.bindings.len == 0) return null;
         const sc = c.input.shortcut orelse return null;
         const pressed: Key = .{ .key = sc.key, .cmd = sc.cmd, .ctrl = sc.ctrl, .alt = sc.alt, .shift = sc.shift };
-        if (k.pending) |first| {
-            k.pending = null;
-            var i = k.bindings.len;
-            while (i > 0) {
-                i -= 1;
-                const b = &k.bindings[i];
-                if (b.len == 2 and eqlKey(b.keys[0], first) and eqlKey(b.keys[1], pressed) and holds(b.when, cx)) {
-                    _ = c.shortcut(sc);
-                    return if (b.remove) null else b;
-                }
-            }
-            _ = c.shortcut(sc); // a chord's unbound second key ends it
-            return null;
-        }
+        var typed: [max_chord]Key = undefined;
+        @memcpy(typed[0..k.chord_len], k.chord[0..k.chord_len]);
+        typed[k.chord_len] = pressed;
+        const n = k.chord_len + 1;
+        const in_chord = k.chord_len > 0;
+        k.chord_len = 0;
         // Later bindings win, as in VS Code.
+        var longer = false;
         var i = k.bindings.len;
         while (i > 0) {
             i -= 1;
             const b = &k.bindings[i];
-            if (!eqlKey(b.keys[0], pressed) or !holds(b.when, cx)) continue;
-            if (b.len == 2) {
-                k.pending = pressed;
-                _ = c.shortcut(sc);
-                return null;
+            if (b.keys.len < n or !holds(b.when, cx)) continue;
+            if (!startsWith(b.keys, typed[0..n])) continue;
+            if (b.keys.len > n) {
+                longer = true;
+                continue;
             }
-            if (b.remove) return null;
             _ = c.shortcut(sc);
-            return b;
+            return if (b.remove) null else b;
         }
+        if (longer and n < max_chord) {
+            @memcpy(k.chord[0..n], typed[0..n]);
+            k.chord_len = n;
+            _ = c.shortcut(sc);
+            return null;
+        }
+        // A chord's unbound key ends it.
+        if (in_chord) _ = c.shortcut(sc);
         return null;
+    }
+
+    /// The keys of the chord typed so far, as the status bar shows them.
+    pub fn chordText(k: *const Keymap, c: *ui.Context) []const u8 {
+        var out: std.ArrayList(u8) = .empty;
+        for (k.chord[0..k.chord_len]) |key| {
+            if (out.items.len > 0) out.append(c.alloc(), ' ') catch {};
+            out.appendSlice(c.alloc(), ui.shortcutLabel(c, key.shortcut())) catch {};
+        }
+        return out.items;
     }
 
     /// Whether the file binds the keys of accelerator `accel` (as the first
@@ -175,13 +211,38 @@ pub const Keymap = struct {
         while (i > 0) {
             i -= 1;
             const b = k.bindings[i];
-            if (b.cmd == cmd and !b.remove and b.len == 1) return b.keys[0];
+            if (b.cmd == cmd and !b.remove and b.keys.len == 1) return b.keys[0];
         }
         return null;
     }
 };
 
-/// Two keys are the same, Command being Control off macOS.
+fn startsWith(keys: []const Key, typed: []const Key) bool {
+    for (typed, 0..) |t, i| if (!eqlKey(keys[i], t)) return false;
+    return true;
+}
+
+/// A command of the file with its arguments, or null for one MyCode
+/// doesn't have.
+fn stepOf(id: []const u8, args: ?std.json.Value) ?Step {
+    if (std.mem.eql(u8, id, "type") or std.mem.eql(u8, id, "workbench.action.terminal.sendSequence")) {
+        var st: Step = .{ .action = if (std.mem.eql(u8, id, "type")) .type_text else .send_sequence };
+        if (args) |ar| if (ar == .object) if (ar.object.get("text")) |t| if (t == .string) {
+            st.text = t.string;
+        };
+        return st;
+    }
+    if (std.mem.eql(u8, id, "vscode.open")) {
+        var st: Step = .{ .action = .open };
+        if (args) |ar| if (ar == .string) {
+            st.text = ar.string;
+        };
+        return st;
+    }
+    return .{ .cmd = commandFor(id) orelse return null };
+}
+
+// Two keys are the same, Command being Control off macOS.
 pub fn sameKey(a: Key, b: Key) bool {
     return eqlKey(a, b);
 }
@@ -422,7 +483,7 @@ pub fn commandFor(n: []const u8) ?Cmd {
         .{ "git.checkout", .git_switch_branch },
         .{ "git.branch", .git_create_branch },
         .{ "git.stash", .git_stash },
-        .{ "git.stashPop", .git_stash_pop },
+        .{ "git.stashPop", .git_stash_pop_pick },
         .{ "git.openChange", .open_changes },
         .{ "git.refresh", .git_refresh },
         .{ "merge-conflict.accept.current", .accept_current },
@@ -440,10 +501,49 @@ pub fn commandFor(n: []const u8) ?Cmd {
         .{ "workbench.action.nextPanelView", .next_terminal },
         .{ "workbench.action.terminal.focusNext", .next_terminal },
         .{ "workbench.action.terminal.focusPrevious", .prev_terminal },
-        .{ "workbench.action.closeFolder", .close_project },
+        .{ "workbench.action.closeFolder", .close_folder },
         .{ "workbench.action.quit", .quit },
     };
     for (vs) |e| if (std.mem.eql(u8, e[0], n)) return e[1];
+    // VS Code's names for the Go app's ids, as keymap.go has them.
+    const go = [_][2][]const u8{
+        .{ "workbench.action.toggleAutoSave", "file.autoSave" },
+        .{ "workbench.action.openSettingsJson", "file.settings" },
+        .{ "workbench.action.openGlobalKeybindingsFile", "file.keybindings" },
+        .{ "workbench.action.closeWindow", "file.closeProject" },
+        .{ "workbench.action.files.copyPathOfActiveFile", "file.copyPath" },
+        .{ "workbench.action.files.copyRelativePathOfActiveFile", "file.copyRelativePath" },
+        .{ "workbench.action.files.revealActiveFileInWindows", "file.reveal" },
+        .{ "undo", "edit.undo" },
+        .{ "redo", "edit.redo" },
+        .{ "editor.action.nextMatchFindAction", "edit.findNext" },
+        .{ "editor.action.previousMatchFindAction", "edit.findPrev" },
+        .{ "editor.action.commentLine", "sel.comment" },
+        .{ "editor.action.indentLines", "sel.indent" },
+        .{ "editor.action.outdentLines", "sel.outdent" },
+        .{ "expandLineSelection", "sel.line" },
+        .{ "editor.action.jumpToBracket", "go.bracket" },
+        .{ "workbench.action.togglePanel", "view.terminal" },
+        .{ "workbench.action.createTerminalEditor", "view.terminalTab" },
+        .{ "workbench.action.splitEditorRight", "view.splitRight" },
+        .{ "workbench.action.focusNextGroup", "view.nextColumn" },
+        .{ "workbench.action.focusPreviousGroup", "view.prevColumn" },
+        .{ "workbench.action.moveEditorToNextGroup", "view.moveTabNext" },
+        .{ "workbench.action.moveEditorToPreviousGroup", "view.moveTabPrev" },
+        .{ "editor.action.fontZoomIn", "view.zoomIn" },
+        .{ "editor.action.fontZoomOut", "view.zoomOut" },
+        .{ "editor.action.fontZoomReset", "view.zoomReset" },
+        .{ "git.commitStaged", "git.commit" },
+        .{ "git.stage", "git.stageFile" },
+        .{ "git.unstage", "git.unstageFile" },
+        .{ "git.deleteRemoteBranch", "git.deleteBranch" },
+        .{ "git.pushForce", "git.forcePush" },
+        .{ "git.pushForceWithLease", "git.forcePush" },
+        .{ "git.viewStash", "git.stashView" },
+        .{ "gitlens.toggleFileBlame", "git.blame" },
+        .{ "gitlens.toggleLineBlame", "git.blame" },
+    };
+    for (go) |e| if (std.mem.eql(u8, e[0], n)) return commands.byId(e[1]);
     return null;
 }
 
@@ -464,4 +564,18 @@ test stripJsonc {
     defer arena.deinit();
     const o = try stripJsonc(arena.allocator(), "[ // c\n {\"key\": \"a//b\", /* x */ \"c\": 1,},\n]");
     try std.testing.expectEqualStrings("[ \n {\"key\": \"a//b\",  \"c\": 1}\n]", o);
+}
+
+test "chords and runCommands" {
+    var k: Keymap = .init(std.testing.allocator);
+    defer k.deinit();
+    k.load(
+        \\[{"key": "ctrl+. g c", "command": "runCommands", "args": {"commands": ["git.stageAll", {"command": "git.commit"}]}},
+        \\ {"key": "ctrl+k", "command": "nothing.here"}]
+    );
+    try std.testing.expectEqual(@as(usize, 1), k.bindings.len);
+    try std.testing.expectEqual(@as(usize, 3), k.bindings[0].keys.len);
+    try std.testing.expectEqual(@as(usize, 2), k.bindings[0].steps.len);
+    try std.testing.expectEqual(Cmd.stage_all, k.bindings[0].steps[0].cmd.?);
+    try std.testing.expectEqual(@as(usize, 1), k.errors.len);
 }

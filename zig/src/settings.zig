@@ -16,6 +16,9 @@ pub const Settings = struct {
     fontSize: f32 = 13,
     fontWeight: f32 = 400,
     lineHeight: f32 = 1.55,
+    /// OpenType features, by commas ("calt=0,ss01"); a list in the file.
+    fontFeatures: []const u8 = "",
+    terminalFontFamily: []const u8 = "",
     terminalFontSize: f32 = 0,
     terminalCopyOnSelect: bool = true,
     terminalProfile: []const u8 = "",
@@ -161,6 +164,15 @@ pub fn parse(a: std.mem.Allocator, v: std.json.Value) Settings {
         s.theme = s.appearance;
         s.appearance = "";
     }
+    s.fontWeight = std.math.clamp(s.fontWeight, 100, 900);
+    if (o.get("fontFeatures")) |ff| if (ff == .array) {
+        var list: std.ArrayList(u8) = .empty;
+        for (ff.array.items) |x| if (x == .string and x.string.len > 0) {
+            if (list.items.len > 0) list.append(a, ',') catch {};
+            list.appendSlice(a, x.string) catch {};
+        };
+        s.fontFeatures = list.items;
+    };
     if (o.get("filesExclude")) |fe| if (fe == .object) {
         var list: std.ArrayList([]const u8) = .empty;
         var it = fe.object.iterator();

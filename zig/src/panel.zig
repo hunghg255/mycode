@@ -15,6 +15,17 @@ pub const Host = struct {
     /// The libraries are downloaded once into the user's cache, off the main
     /// thread: 0 while, 1 done, 2 failed.
     ready: std.atomic.Value(u8) = .init(0),
+    /// The settings' terminal font and copy on select, which open terminals
+    /// follow as they change (set by the window each frame).
+    font: Font = .{},
+
+    pub const Font = struct {
+        size: f32 = 13,
+        family: ?[]const u8 = null,
+        features: []const u8 = "",
+        weight: u16 = 0,
+        copy_on_select: bool = true,
+    };
 
     pub fn prepare(h: *Host, gpa: std.mem.Allocator, io: std.Io) void {
         const th = std.Thread.spawn(.{}, fetch, .{ h, gpa, io }) catch {
@@ -166,6 +177,13 @@ pub const Term = struct {
             if (box.interaction().rect) |r| term.rect = r;
             box.end();
         }
+        const f = term.host.font;
+        const o = &term.t.opts;
+        o.font_size = f.size;
+        o.font_family = f.family;
+        o.font_features = f.features;
+        o.font_weight = f.weight;
+        o.copy_on_select = f.copy_on_select;
         terminal.view(c, term.t, .{ .autofocus = term.focus });
         term.focus = false;
         term.bell = false;

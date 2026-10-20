@@ -78,6 +78,11 @@ pub const DiffList = struct {
     /// Buttons to stage and discard: the Changes tab's, not a commit's.
     editable: bool = true,
     layout: Layout = .auto,
+    /// Set when the Layout button chose another, for the app to keep.
+    layout_chosen: bool = false,
+    /// The editor's font: OpenType features and weight.
+    features: []const u8 = "",
+    weight: u16 = 0,
     /// The rows of the last frame, and those built.
     refs: std.ArrayList(Ref) = .empty,
     first_built: usize = 0,
@@ -342,7 +347,7 @@ pub const DiffList = struct {
         const t = c.theme;
         var ev: Event = .none;
         const size: f32 = 12.5;
-        const opts: ui.DiffViewOptions = .{ .size = size, .colors = colors, .digits = 4 };
+        const opts: ui.DiffViewOptions = .{ .size = size, .colors = colors, .digits = 4, .features = dl.features, .weight_value = dl.weight };
         const row_h = ui.diffRowHeight(c, opts);
         const split_mode = dl.split(c, size);
         dl.build(c, review, split_mode);
@@ -383,11 +388,14 @@ pub const DiffList = struct {
                 .split => "Layout: Side by Side",
                 .inline_ => "Layout: Inline",
             };
-            if (tool(c, label)) dl.layout = switch (dl.layout) {
-                .auto => .split,
-                .split => .inline_,
-                .inline_ => .auto,
-            };
+            if (tool(c, label)) {
+                dl.layout = switch (dl.layout) {
+                    .auto => .split,
+                    .split => .inline_,
+                    .inline_ => .auto,
+                };
+                dl.layout_chosen = true;
+            }
             if (tool(c, "Fold All")) for (dl.entries.items) |*e| {
                 e.folded = true;
             };
