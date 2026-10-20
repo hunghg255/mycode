@@ -154,6 +154,11 @@ fn pasteFiles(wb: *Workbench, dir: []const u8) void {
         for (files) |f| wb.gpa.free(f);
         wb.gpa.free(files);
     }
+    copyInto(wb, files, dir);
+}
+
+/// Copies files and folders into `dir`, under free names, choosing the last.
+pub fn copyInto(wb: *Workbench, files: []const []const u8, dir: []const u8) void {
     var last: ?[]u8 = null;
     defer if (last) |l| wb.gpa.free(l);
     for (files) |src| {

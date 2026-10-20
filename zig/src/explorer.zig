@@ -48,6 +48,10 @@ pub const Explorer = struct {
     space_menu: ui.Menu = .{},
     menu_path: []const u8 = "",
     focused: bool = false,
+    /// The rows as last laid out, and the tree's box: files of File
+    /// Explorer dropped on a row copy into its folder (`dropTarget`).
+    drop_rows: std.ArrayList(DropRow) = .empty,
+    area_rect: ?ui.Rect = null,
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io, root: []const u8) Explorer {
         var e: Explorer = .{ .gpa = gpa, .io = io, .root = root };
@@ -56,6 +60,7 @@ pub const Explorer = struct {
     }
 
     pub fn deinit(e: *Explorer) void {
+        e.drop_rows.deinit(e.gpa);
         e.dropKids();
         e.kids.deinit(e.gpa);
         e.dirs.deinit(e.gpa);
@@ -231,9 +236,29 @@ pub const Explorer = struct {
         }
     }
 
-    pub fn view(e: *Explorer, c: *ui.Context, faint: ui.Color, colors: StatusColors) Event {
+    /// The folder files dropped at `p` copy into: a row's folder, the
+    /// folder of a row's file, or the root below the rows; null outside.
+    pub fn dropTarget(e: *const Explorer, p: ui.Point) ?[]const u8 {
+        const area = e.area_rect orelse return null;
+        if (!area.contains(p)) return null;
+        for (e.drop_rows.items) |r| if (r.rect.contains(p)) {
+            return if (e.dirs.contains(r.path)) r.path else std.fs.path.dirname(r.path) orelse e.root;
+        };
+        return e.root;
+    }
+
+    /// How rows look beyond Git's marks: the file shown, and the files with
+    /// changes not saved, in the editor's color for them.
+    pub const Look = struct {
+        active: ?[]const u8 = null,
+        dirty: []const []const u8 = &.{},
+        modified: ui.Color = .transparent,
+    };
+
+    pub fn view(e: *Explorer, c: *ui.Context, faint: ui.Color, colors: StatusColors, look: Look) Event {
         const t = c.theme;
         var ev: Event = .none;
+        e.drop_rows.clearRetainingCapacity();
         const roots = e.children(e.root);
         // The tree in a box of its own: a click on the space below the files
         // lets go of the file chosen, a right click there is the workspace's menu.
@@ -244,7 +269,13 @@ pub const Explorer = struct {
             const name = std.fs.path.basename(r.item);
             const mark = e.marks.get(r.item);
             const ignored = mark == null and e.isIgnored(r.item);
-            const color = if (mark) |m| colors.of(m) else if (ignored) faint else t.text;
+            const unsaved = !dir and for (look.dirty) |d| {
+                if (std.mem.eql(u8, d, r.item)) break true;
+            } else false;
+            const active = if (look.active) |a| std.mem.eql(u8, a, r.item) else false;
+            // Changed in the editor, then ignored, then Git's mark; files
+            // other than the one shown a little quieter.
+            const color = if (unsaved) look.modified else if (ignored) faint else if (mark) |m| colors.of(m) else if (!dir and !active) t.text.mix(t.muted, 0.35) else t.text;
             const cell = ui.div(c).row().grow().h(22).gap(6).itemsCenter();
             if (dir) {
                 icons.folder(c, name, e.state.isOpen(r.item));
@@ -260,6 +291,7 @@ pub const Explorer = struct {
             }
             const ia = cell.interaction();
             cell.end();
+            if (ia.rect) |rr| e.drop_rows.append(e.gpa, .{ .rect = rr, .path = r.item }) catch {};
             if (ia.pressed and c.input.pressed and !dir and ev == .none) ev = .{ .press = r.item };
             if (ia.double_clicked) {
                 if (!dir) ev = .{ .open = .{ .path = r.item, .preview = false } };
@@ -276,17 +308,16 @@ pub const Explorer = struct {
                 if (m.item("New File…", .{})) ev = .{ .new_file = folder };
                 if (m.item("New Folder…", .{})) ev = .{ .new_folder = folder };
                 m.separator();
-                if (!dir) if (m.item("Open to the Side", .{})) {
-                    ev = .{ .open = .{ .path = r.item, .preview = false } };
-                };
-                if (mark != null) if (m.item("Open Changes", .{})) {
-                    ev = .{ .open_changes = r.item };
-                };
                 if (m.item("Reveal in File Explorer", .{})) myzig.shell.showInFolder(r.item);
                 if (m.item("Open in Terminal", .{})) ev = .{ .open_terminal = folder };
                 m.separator();
+                if (mark != null and !dir) {
+                    if (m.item("Open Changes", .{})) ev = .{ .open_changes = r.item };
+                    m.separator();
+                }
                 if (m.item("Copy", .{ .shortcut = ui.keys.label("⌘C") })) myzig.clipboard.writeFiles(e.gpa, &.{r.item}) catch {};
                 if (m.item("Paste", .{ .shortcut = ui.keys.label("⌘V") })) ev = .{ .paste = folder };
+                m.separator();
                 if (m.item("Copy Path", .{})) _ = myzig.clipboard.writeText(r.item);
                 if (m.item("Copy Relative Path", .{})) {
                     const rel = c.print("{s}", .{fs.relative(e.root, r.item)});
@@ -300,6 +331,7 @@ pub const Explorer = struct {
         }
         const res = rows.end();
         const ai = area.interaction();
+        e.area_rect = ai.rect;
         area.end();
         if (ai.clicked and ev == .none) {
             e.state.selected = null;
@@ -329,6 +361,8 @@ pub const Explorer = struct {
         return ev;
     }
 };
+
+const DropRow = struct { rect: ui.Rect, path: []const u8 };
 
 pub const StatusColors = struct {
     modified: ui.Color,

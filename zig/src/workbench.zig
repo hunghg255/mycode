@@ -118,6 +118,8 @@ pub const Workbench = struct {
     review_menu: ui.Menu = .{},
     indent_menu: ui.Menu = .{},
     eol_menu: ui.Menu = .{},
+    /// The file the Explorer last followed (a hash of its path).
+    tree_synced: u64 = 0,
     bell: bool = false,
     /// What waits for the tabs asked about to close: the project closing,
     /// its window, the app quitting.
@@ -484,7 +486,20 @@ pub const Workbench = struct {
                 if (top.clicked()) wb.explorer.state.selected = null;
                 top.end();
                 if (wb.explorer.children(wb.explorer.root).len == 0) emptyFolder(wb, c);
-                wbfiles.explorerEvent(wb, c, wb.explorer.view(c, .hex(wb.shell.palette.faint), wb.statusColors()));
+                // Follow the file shown: open the folders above it and choose it.
+                const active: ?[]const u8 = if (wb.editors.currentDoc()) |d| (if (d.path.len > 0) d.path else null) else null;
+                const synced = if (active) |a| std.hash.Wyhash.hash(0, a) else 0;
+                if (synced != wb.tree_synced) {
+                    wb.tree_synced = synced;
+                    if (active) |a| if (fs.relative(wb.root, a).ptr != a.ptr) wb.explorer.reveal(a);
+                }
+                var dirty: std.ArrayList([]const u8) = .empty;
+                for (wb.editors.cols.items) |col| for (col.items.items) |it| switch (it.body) {
+                    .file => |d| if (d.dirty() and d.path.len > 0) dirty.append(c.alloc(), d.path) catch {},
+                    else => {},
+                };
+                const look: @import("explorer.zig").Explorer.Look = .{ .active = active, .dirty = dirty.items, .modified = .hex(wb.shell.palette.modified) };
+                wbfiles.explorerEvent(wb, c, wb.explorer.view(c, .hex(wb.shell.palette.faint), wb.statusColors(), look));
             },
             .search => {
                 if (wb.search.changed()) wb.search.start(wb.shell.store.s.filesExclude, wb.dirtyTexts(c.alloc()));

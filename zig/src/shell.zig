@@ -854,6 +854,12 @@ pub const Shell = struct {
                 else => {},
             };
         }
+        // On the Explorer, they copy into the folder they land on.
+        if (sh.active()) |wb| if (wb.sidebar_open and wb.side == .explorer) if (wb.explorer.dropTarget(sh.last_mouse)) |dir| {
+            @import("wb_files.zig").copyInto(wb, paths, dir);
+            w.redraw();
+            return;
+        };
         // Folders open as projects; files where they land over the columns.
         var files: std.ArrayList([]const u8) = .empty;
         defer files.deinit(sh.gpa);
