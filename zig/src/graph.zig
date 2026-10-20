@@ -30,9 +30,39 @@ pub const Graph = struct {
     all: bool = false,
     menu: ui.Menu = .{},
     menu_at: usize = 0,
+    /// The remotes' names, which tell a remote's branch from a local one.
+    remotes: []const []const u8 = &.{},
+    /// The branch checked out, and a command stopped for conflicts: what
+    /// the menu offers.
+    branch: []const u8 = "",
+    op: []const u8 = "",
 
     pub fn init(gpa: std.mem.Allocator) Graph {
         return .{ .gpa = gpa, .arena = .init(gpa) };
+    }
+
+    /// A commit's branches and tags, from its decoration ("HEAD -> main,
+    /// origin/main, tag: v1"), HEAD left out.
+    pub fn refsOf(g: *const Graph, refs: []const u8, out: []Ref) []Ref {
+        var n: usize = 0;
+        var it = std.mem.tokenizeSequence(u8, refs, ", ");
+        while (it.next()) |r0| {
+            if (n == out.len) break;
+            var r = r0;
+            if (std.mem.startsWith(u8, r, "HEAD -> ")) r = r[8..];
+            if (std.mem.eql(u8, r, "HEAD") or std.mem.endsWith(u8, r, "/HEAD")) continue;
+            if (std.mem.startsWith(u8, r, "tag: ")) {
+                out[n] = .{ .name = r[5..], .kind = .tag };
+            } else {
+                var remote = false;
+                if (std.mem.indexOfScalar(u8, r, '/')) |slash| for (g.remotes) |rm| if (std.mem.eql(u8, rm, r[0..slash])) {
+                    remote = true;
+                };
+                out[n] = .{ .name = r, .kind = if (remote) .remote else .branch };
+            }
+            n += 1;
+        }
+        return out[0..n];
     }
 
     pub fn deinit(g: *Graph) void {
@@ -53,6 +83,12 @@ pub const Graph = struct {
             g.commits = &.{};
             return;
         }
+        var remotes: std.ArrayList([]const u8) = .empty;
+        if (git.run(a, io, top, &.{"remote"})) |rm| {
+            var it = std.mem.tokenizeAny(u8, rm.stdout, "\r\n");
+            while (it.next()) |name| remotes.append(a, name) catch {};
+        } else |_| {}
+        g.remotes = remotes.items;
         // Commits not pushed: those after the upstream.
         var unpushed: std.StringHashMapUnmanaged(void) = .empty;
         if (git.run(a, io, top, &.{ "rev-list", "@{upstream}..HEAD" })) |u| {
@@ -133,6 +169,16 @@ pub const Graph = struct {
         branch_at: []const u8,
         tag_at: []const u8,
         undo,
+        merge: []const u8,
+        rebase: []const u8,
+        reset: []const u8,
+        revert: struct { hash: []const u8, merge: bool },
+        cherry_pick: struct { hash: []const u8, merge: bool },
+        continue_op,
+        abort_op,
+        rename_branch: []const u8,
+        delete_branch: []const u8,
+        delete_remote: []const u8,
         more,
     };
 
@@ -170,16 +216,53 @@ pub const Graph = struct {
             if (ui.contextMenu(c, &g.menu, ri)) |m| {
                 defer m.end();
                 g.menu_at = i;
+                const moving = g.op.len > 0;
+                const br = if (g.branch.len > 0) g.branch else "HEAD";
+                const is_merge = cm.parents.len > 1;
                 if (m.item("Open Changes", .{})) ev = .{ .keep = cm.hash };
-                if (m.item("Check Out", .{})) ev = .{ .checkout = cm.hash };
-                if (m.item("Create Branch Here…", .{})) ev = .{ .branch_at = cm.hash };
-                if (m.item("Create Tag Here…", .{})) ev = .{ .tag_at = cm.hash };
                 m.separator();
-                if (m.item("Copy Hash", .{})) _ = myzig.clipboard.writeText(cm.hash);
-                if (m.item("Copy Message", .{})) _ = myzig.clipboard.writeText(cm.subject);
+                if (m.item("Check Out…", .{ .disabled = moving or cm.head })) ev = .{ .checkout = cm.hash };
+                if (m.item(c.print("Merge into {s}…", .{br}), .{ .disabled = moving or cm.head })) ev = .{ .merge = cm.hash };
+                if (m.item(c.print("Rebase {s} onto This Commit…", .{br}), .{ .disabled = moving or cm.head })) ev = .{ .rebase = cm.hash };
+                m.separator();
+                if (m.item("Create Tag Here…", .{})) ev = .{ .tag_at = cm.hash };
+                if (m.item("Create Branch Here…", .{})) ev = .{ .branch_at = cm.hash };
+                m.separator();
+                if (m.item(c.print("Reset {s} to This Commit…", .{br}), .{ .disabled = moving or cm.head })) ev = .{ .reset = cm.hash };
+                if (m.item("Revert Commit…", .{ .disabled = moving })) ev = .{ .revert = .{ .hash = cm.hash, .merge = is_merge } };
+                if (m.item("Cherry-Pick Commit", .{ .disabled = moving or cm.head })) ev = .{ .cherry_pick = .{ .hash = cm.hash, .merge = is_merge } };
+                if (moving) {
+                    m.separator();
+                    if (m.item(c.print("Continue {s}", .{g.op}), .{})) ev = .continue_op;
+                    if (m.item(c.print("Abort {s}…", .{g.op}), .{})) ev = .abort_op;
+                }
+                m.separator();
+                if (m.item("Copy Commit Hash", .{})) _ = myzig.clipboard.writeText(cm.hash);
+                if (m.item("Copy Commit Message", .{})) _ = myzig.clipboard.writeText(cm.subject);
+                // Each branch and tag: its name, and renaming or deleting it.
+                var names: [12]Ref = undefined;
+                const refs = g.refsOf(cm.refs, &names);
+                for (refs) |rf| if (m.item(c.print("Copy “{s}”", .{rf.name}), .{})) {
+                    _ = myzig.clipboard.writeText(rf.name);
+                };
+                var sep = false;
+                for (refs) |rf| switch (rf.kind) {
+                    .branch => {
+                        if (!sep) m.separator();
+                        sep = true;
+                        if (m.item(c.print("Rename Branch “{s}”…", .{rf.name}), .{})) ev = .{ .rename_branch = rf.name };
+                        if (m.item(c.print("Delete Branch “{s}”…", .{rf.name}), .{ .disabled = std.mem.eql(u8, rf.name, g.branch) })) ev = .{ .delete_branch = rf.name };
+                    },
+                    .remote => {
+                        if (!sep) m.separator();
+                        sep = true;
+                        if (m.item(c.print("Delete Remote Branch “{s}”…", .{rf.name}), .{})) ev = .{ .delete_remote = rf.name };
+                    },
+                    .tag => {},
+                };
                 if (cm.head) {
                     m.separator();
-                    if (m.item("Undo Commit", .{})) ev = .undo;
+                    if (m.item("Undo Last Commit", .{ .disabled = moving })) ev = .undo;
                 }
             }
         }
@@ -192,6 +275,8 @@ pub const Graph = struct {
         return ev;
     }
 };
+
+pub const Ref = struct { name: []const u8, kind: enum { branch, remote, tag } };
 
 fn initials(c: *ui.Context, name: []const u8) []const u8 {
     var out: std.ArrayList(u8) = .empty;

@@ -30,6 +30,11 @@ pub const Kind = enum {
     commit_amend,
     continue_op,
     abort_op,
+    merge,
+    rebase,
+    reset,
+    revert,
+    cherry_pick,
     other,
 };
 

@@ -44,6 +44,22 @@ fn slow(wb: *Workbench, kind: gitops.Kind, args: []const []const u8, subject: []
     if (!wb.runner.run(kind, t, args, subject)) _ = wb.toasts.show("A Git command is running");
 }
 
+/// What a commit's menu asks for: merging it, rebasing onto it, resetting
+/// to it (asked first), reverting it, cherry-picking it, and its branches.
+fn graphEvent(wb: *Workbench, c: *ui.Context, ge: @import("graph.zig").Graph.Event) void {
+    const br = wb.scm.branch orelse "HEAD";
+    switch (ge) {
+        .merge => |h| wb.ask(.merge, h, c.print("Merge {s} into {s}?", .{ h[0..@min(h.len, 7)], br }), "Its commits come into the branch checked out.", &.{ "Cancel", "Merge" }),
+        .rebase => |h| wb.ask(.rebase, h, c.print("Rebase {s} onto {s}?", .{ br, h[0..@min(h.len, 7)] }), c.print("The commits of {s} that it lacks are made again on top of it. Rebasing commits already pushed rewrites history others may have.", .{br}), &.{ "Cancel", "Rebase" }),
+        .reset => |h| wb.ask(.reset, h, c.print("Reset {s} to {s}?", .{ br, h[0..@min(h.len, 7)] }), "Soft keeps the changes of the commits after it staged; Mixed keeps them unstaged; Hard discards them and every change of the work tree.", &.{ "Cancel", "Soft", "Mixed", "Hard" }),
+        .revert => |r| wb.ask(.revert, if (r.merge) c.print("m:{s}", .{r.hash}) else r.hash, c.print("Revert {s}?", .{r.hash[0..@min(r.hash.len, 7)]}), if (r.merge) "A new commit takes back its changes, against its first parent." else "A new commit takes back its changes.", &.{ "Cancel", "Revert" }),
+        .cherry_pick => |r| slow(wb, .cherry_pick, if (r.merge) &.{ "cherry-pick", "-m", "1", r.hash } else &.{ "cherry-pick", r.hash }, r.hash),
+        .rename_branch => |n| wb.prompt.ask(.rename_branch, "Rename the branch", n, n),
+        .delete_branch, .delete_remote => |n| wb.ask(.delete_branch, n, c.print("Delete the branch “{s}”?", .{n}), if (ge == .delete_remote) "It is deleted on its remote." else "The toast's Undo brings it back.", &.{ "Cancel", "Delete" }),
+        else => {},
+    }
+}
+
 /// Goes on with the command stopped for conflicts, once they are resolved
 /// and staged: a merge with a message commits it.
 fn continueOp(wb: *Workbench) void {
@@ -143,6 +159,7 @@ pub fn commit(wb: *Workbench, all: bool, amend: bool, then_push: bool) void {
     if (msg.len > 0) args.appendSlice(wb.gpa, &.{ "-m", msg }) catch return else args.append(wb.gpa, "--no-edit") catch return;
     if (quick(wb, args.items)) {
         wb.scm.message.clear();
+        wb.scm.amending = false;
         wb.toast_undo_commit = wb.toasts.showAction("Committed", "Undo");
         if (then_push) push(wb, false);
     }
@@ -150,12 +167,14 @@ pub fn commit(wb: *Workbench, all: bool, amend: bool, then_push: bool) void {
 
 fn amendFill(wb: *Workbench) void {
     const t = top(wb) orelse return;
+    // The next commit amends the last, its message the last's unless one is written.
+    wb.scm.amending = true;
+    wb.sidebar_open = true;
+    wb.side = .scm;
+    if (std.mem.trim(u8, wb.scm.message.text(), " \r\n\t").len > 0) return;
     const m = git.line(wb.gpa, wb.io, t, &.{ "log", "-1", "--format=%B" }) orelse return;
     defer wb.gpa.free(m);
     wb.scm.message.set(m);
-    wb.sidebar_open = true;
-    wb.side = .scm;
-    wb.ask(.commit_all, "amend", "Amend the last commit?", "The staged changes and the message go into the last commit.", &.{ "Cancel", "Amend" });
 }
 
 /// Takes the last commit back, keeping its changes staged and its message.
@@ -191,6 +210,22 @@ pub fn onGitDone(ctx: *anyopaque, d: gitops.Done) void {
         // A rebase stops again at the next commit that conflicts; a pull
         // or a merge may stop for conflicts too.
         if (wb.scm.op != .none and wb.scm.count(.merge) > 0) {
+            // The message git proposes waits in the box, but a rebase's.
+            if (wb.scm.op != .rebase and std.mem.trim(u8, wb.scm.message.text(), " \r\n\t").len == 0) if (wb.scm.git_dir) |gd| {
+                const p = std.fs.path.join(wb.gpa, &.{ gd, "MERGE_MSG" }) catch "";
+                defer wb.gpa.free(p);
+                if (fs.read(wb.gpa, wb.io, p)) |msg| {
+                    defer wb.gpa.free(msg);
+                    var out: std.ArrayList(u8) = .empty;
+                    defer out.deinit(wb.gpa);
+                    var it = std.mem.splitScalar(u8, msg, '\n');
+                    while (it.next()) |l| if (!std.mem.startsWith(u8, l, "#")) {
+                        out.appendSlice(wb.gpa, l) catch {};
+                        out.append(wb.gpa, '\n') catch {};
+                    };
+                    wb.scm.message.set(std.mem.trim(u8, out.items, " \r\n\t"));
+                } else |_| {}
+            };
             _ = wb.toasts.add(.{ .title = "Stopped for conflicts", .description = "Resolve them, stage the files, then Continue.", .kind = .@"error" });
             return;
         }
@@ -213,6 +248,11 @@ pub fn onGitDone(ctx: *anyopaque, d: gitops.Done) void {
         .stash_apply => _ = wb.toasts.show("Stash applied"),
         .checkout, .create_branch => _ = wb.toasts.show(wb.gpa.dupe(u8, "Switched branch") catch "Switched"),
         .continue_op => _ = wb.toasts.show("Continued"),
+        .merge => _ = wb.toasts.add(.{ .title = "Merged", .kind = .success }),
+        .rebase => _ = wb.toasts.add(.{ .title = "Rebased", .kind = .success }),
+        .reset => _ = wb.toasts.show("Reset"),
+        .revert => _ = wb.toasts.show("Reverted"),
+        .cherry_pick => _ = wb.toasts.show("Cherry-picked"),
         .abort_op => _ = wb.toasts.show("Aborted"),
         .delete_branch => {
             wb.toast_restore_branch = wb.toasts.showAction("Branch deleted", "Undo");
@@ -276,6 +316,7 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         },
         .continue_op => run(wb, c, .git_continue),
         .abort_op => run(wb, c, .git_abort),
+        .graph => |ge| graphEvent(wb, c, ge),
         .stash_files => |ps| {
             const list = std.mem.join(c.alloc(), "\n", ps) catch return;
             wb.prompt.ask(.stash_files, if (ps.len == 1) "Stash this file: a message (or none)" else "Stash these files: a message (or none)", "", list);
@@ -359,6 +400,21 @@ pub fn confirmed(wb: *Workbench, c: *ui.Context, button: usize) void {
         .checkout_detached => if (button == 1) slow(wb, .checkout, &.{ "checkout", "--detach", arg }, arg),
         .close_project => if (button == 1) wb.shell.closeProjectNow(wb),
         .discard_hunk_closed => {},
+        .merge => if (button == 1) slow(wb, .merge, &.{ "merge", "--no-edit", arg }, arg),
+        .rebase => if (button == 1) slow(wb, .rebase, &.{ "rebase", arg }, arg),
+        .revert => if (button == 1) {
+            // "m:<hash>" is a merge, taken back against its first parent.
+            if (std.mem.startsWith(u8, arg, "m:")) slow(wb, .revert, &.{ "revert", "--no-edit", "-m", "1", arg[2..] }, arg[2..]) else slow(wb, .revert, &.{ "revert", "--no-edit", arg }, arg);
+        },
+        .reset => if (button >= 1) {
+            const mode: []const u8 = switch (button) {
+                1 => "--soft",
+                2 => "--mixed",
+                else => "--hard",
+            };
+            wb.editors.saveAll();
+            slow(wb, .reset, &.{ "reset", mode, arg }, arg);
+        },
         .abort_op => if (button == 1 and wb.scm.op != .none) {
             if (wb.scm.op != .rebase) wb.scm.message.clear();
             slow(wb, .abort_op, &.{ wb.scm.op.name(), "--abort" }, wb.scm.op.title());

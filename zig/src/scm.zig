@@ -9,6 +9,7 @@ const git = @import("git.zig");
 const icons = @import("icons.zig");
 const branches = @import("branches.zig");
 const Graph = @import("graph.zig").Graph;
+const scmtree = @import("scmtree.zig");
 const StatusColors = @import("explorer.zig").StatusColors;
 
 pub const Group = enum { merge, staged, changes, untracked };
@@ -82,6 +83,8 @@ pub const Event = union(enum) {
     stash_files: []const []const u8,
     continue_op,
     abort_op,
+    /// A commit's menu: a merge, a rebase, a reset, branches renamed...
+    graph: Graph.Event,
     /// A change pressed: it may be dragged into a column (relative path).
     press: []const u8,
 };
@@ -112,11 +115,17 @@ pub const Scm = struct {
     anchor: ?[]u8 = null,
     /// The rows in order, this frame (for ranges and Ctrl+A).
     order: std.ArrayList([]const u8) = .empty,
+    /// The group of each row of `order` (a file can be staged and changed).
+    order_g: std.ArrayList(Group) = .empty,
     list_focus: bool = false,
     list_id: u64 = 0,
     /// The Git folder, and the command stopped part way in it.
     git_dir: ?[]u8 = null,
     op: Op = .none,
+    /// The next commit amends the last one.
+    amending: bool = false,
+    /// The folders closed in the tree, by group.
+    closed: [4]std.StringHashMapUnmanaged(void) = .{ .empty, .empty, .empty, .empty },
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io, root: []const u8) Scm {
         return .{ .gpa = gpa, .io = io, .root = root, .graph = .init(gpa) };
@@ -127,8 +136,14 @@ pub const Scm = struct {
         s.clearChosen();
         s.chosen.deinit(s.gpa);
         s.order.deinit(s.gpa);
+        s.order_g.deinit(s.gpa);
         if (s.top) |t| s.gpa.free(t);
         if (s.git_dir) |d| s.gpa.free(d);
+        for (&s.closed) |*m| {
+            var it = m.keyIterator();
+            while (it.next()) |k| s.gpa.free(k.*);
+            m.deinit(s.gpa);
+        }
         if (s.err) |e| s.gpa.free(e);
         if (s.branch) |b| s.gpa.free(b);
         s.graph.deinit();
@@ -335,6 +350,19 @@ pub const Scm = struct {
                 if (m.item("Refresh", .{})) ev = .{ .run = .git_refresh };
             }
         }
+        if (s.amending) {
+            const bar = ui.div(c).row().wFull().px(10).py(2);
+            const box = ui.div(c).row().wFull().gap(6).itemsCenter().pl(8).pr(4).py(4).rounded(5).bg(t.accent.alpha(0.12));
+            ui.icon(c, "pencil", .{ .size = 11, .color = t.accent });
+            ui.text(c, "Amending last commit", .{ .size = 11.5 });
+            ui.spacer(c);
+            if (ui.button(c, "Cancel", .{ .variant = .ghost, .size = 11 }).clicked) {
+                s.amending = false;
+                s.message.clear();
+            }
+            box.end();
+            bar.end();
+        }
         if (s.op != .none) ev = s.opBanner(c, ev);
         // The message and the commit button.
         {
@@ -344,21 +372,27 @@ pub const Scm = struct {
             const summary = std.mem.sliceTo(s.message.text(), '\n');
             if (summary.len > 50) ui.text(c, c.print("{d} characters in the summary", .{summary.len}), .{ .size = 11, .color = if (summary.len > 72) t.danger else t.muted });
             const nothing_staged = s.count(.staged) == 0;
-            const label = if (nothing_staged and s.changes.len > 0) "Commit All" else "Commit";
+            const label = if (s.amending) "Amend Commit" else if (nothing_staged and s.changes.len > 0) "Commit All" else "Commit";
             ui.row(c, .{ .width = .fill, .gap = 2 });
             if (ui.button(c, label, .{ .variant = .primary, .width = .fill, .size = 13 }).clicked or
                 (r.focused and c.shortcut(.{ .key = ui.Shortcut.enter, .cmd = true })) or r.submitted)
-                ev = .{ .commit = .{ .all = nothing_staged, .amend = false, .push = false } };
+                ev = .{ .commit = .{ .all = nothing_staged and !s.amending, .amend = s.amending, .push = false } };
             if (ui.menuButton(c, "", &s.commit_menu, .{ .size = 12 })) |m| {
                 defer m.end();
                 if (m.item("Commit & Push", .{})) ev = .{ .commit = .{ .all = nothing_staged, .amend = false, .push = true } };
-                if (m.item("Amend Last Commit", .{})) ev = .amend_fill;
+                if (m.item("Amend Last Commit", .{ .checked = s.amending })) {
+                    if (s.amending) {
+                        s.amending = false;
+                        s.message.clear();
+                    } else ev = .amend_fill;
+                }
                 if (m.item("Undo Last Commit", .{})) ev = .undo_commit;
             }
             ui.end(c);
             if (s.err) |e| ui.text(c, e, .{ .size = 11, .color = t.danger, .wrap = true });
         }
         s.order.clearRetainingCapacity();
+        s.order_g.clearRetainingCapacity();
         // The list takes the keyboard when a row is clicked: Ctrl+A, Space.
         const sc = c.open(.{ .scroll = true, .direction = .column, .width = .fill, .grow = 1 }, null);
         defer c.end();
@@ -426,26 +460,19 @@ pub const Scm = struct {
                 if (head.clicked() and !acted) s.open[gi] = !s.open[gi];
                 head.end();
                 if (s.open[gi]) {
-                    var last_dir: []const u8 = "\x00";
-                    for (s.changes) |ch| if (groupOf(ch, g)) {
-                        if (s.tree) {
-                            const dir = std.fs.path.dirnamePosix(ch.path) orelse "";
-                            if (!std.mem.eql(u8, dir, last_dir)) {
-                                last_dir = dir;
-                                if (dir.len > 0) {
-                                    ui.row(c, .{ .width = .fill, .padding = .{ .left = 22, .top = 2, .bottom = 2 }, .gap = 6 });
-                                    ui.icon(c, "folder", .{ .size = 11, .color = t.muted });
-                                    ui.text(c, dir, .{ .size = 12, .color = t.muted });
-                                    ui.end(c);
-                                }
-                            }
-                        }
-                        const a = s.changeRow(c, ch, g, colors);
+                    if (s.tree) {
+                        const a = s.treeRows(c, g, gi, colors);
+                        if (a != .none) ev = a;
+                    } else for (s.changes) |ch| if (groupOf(ch, g)) {
+                        const a = s.changeRow(c, ch, g, colors, 22);
                         if (a != .none) ev = a;
                     };
                 }
             }
         }
+        if (sci.focused) if (s.listKeys(c)) |a| {
+            ev = a;
+        };
         // COMMITS.
         {
             const head = ui.div(c).row().wFull().h(24).px(8).gap(6).itemsCenter().hover(t.surface_hover);
@@ -465,7 +492,10 @@ pub const Scm = struct {
                 if (s.commits_open) if (s.top) |top| s.graph.load(s.io, top);
             }
             head.end();
-            if (s.commits_open) switch (s.graph.view(c)) {
+            s.graph.branch = s.branch orelse "";
+            s.graph.op = s.op.title();
+            const gev: Graph.Event = if (s.commits_open) s.graph.view(c) else .none;
+            switch (gev) {
                 .none => {},
                 .open => |h| ev = .{ .commit_open = .{ .hash = h, .keep = false } },
                 .keep => |h| ev = .{ .commit_open = .{ .hash = h, .keep = true } },
@@ -473,22 +503,143 @@ pub const Scm = struct {
                 .branch_at => |h| ev = .{ .branch_at = h },
                 .tag_at => |h| ev = .{ .tag_at = h },
                 .undo => ev = .undo_commit,
+                .continue_op => ev = .continue_op,
+                .abort_op => ev = .abort_op,
+                .merge, .rebase, .reset, .revert, .cherry_pick, .rename_branch, .delete_branch, .delete_remote => ev = .{ .graph = gev },
                 .more => {
                     s.graph.limit += 50;
                     if (s.top) |top| s.graph.load(s.io, top);
                 },
-            };
+            }
         }
         return ev;
     }
 
-    fn changeRow(s: *Scm, c: *ui.Context, ch: git.Change, g: Group, colors: StatusColors) Event {
+    /// The list's keys, on the rows as this frame built them: Up and Down
+    /// choose the next row (Shift: a range from the anchor), Home and End
+    /// the first and the last, Enter opens the chosen change.
+    fn listKeys(s: *Scm, c: *ui.Context) ?Event {
+        const n = s.order.items.len;
+        if (n == 0) return null;
+        const S = ui.Shortcut;
+        var at: ?usize = null;
+        if (s.anchor) |a| for (s.order.items, 0..) |p, k| if (std.mem.eql(u8, p, a)) {
+            at = k;
+            break;
+        };
+        // Where the caret of the choice is: the last chosen row.
+        var cur = at;
+        if (s.chosen.items.len > 0) for (s.order.items, 0..) |p, k| if (std.mem.eql(u8, p, s.chosen.items[s.chosen.items.len - 1])) {
+            cur = k;
+        };
+        var to: ?usize = null;
+        var extend = false;
+        if (c.shortcut(.{ .key = S.down })) to = if (cur) |k| @min(k + 1, n - 1) else 0;
+        if (c.shortcut(.{ .key = S.up })) to = if (cur) |k| k -| 1 else 0;
+        if (c.shortcut(.{ .key = S.down, .shift = true })) {
+            to = if (cur) |k| @min(k + 1, n - 1) else 0;
+            extend = true;
+        }
+        if (c.shortcut(.{ .key = S.up, .shift = true })) {
+            to = if (cur) |k| k -| 1 else 0;
+            extend = true;
+        }
+        if (c.shortcut(.{ .key = S.home })) to = 0;
+        if (c.shortcut(.{ .key = S.end })) to = n - 1;
+        if (to) |k| {
+            if (extend and at != null) {
+                s.clearChosenKeepAnchor();
+                const a = at.?;
+                var i = @min(a, k);
+                while (i <= @max(a, k)) : (i += 1) if (i != k) s.choose(s.order.items[i]);
+                s.choose(s.order.items[k]);
+            } else {
+                s.clearChosen();
+                s.choose(s.order.items[k]);
+                s.setAnchor(s.order.items[k]);
+            }
+            c.changed = true;
+            return null;
+        }
+        if (c.shortcut(.{ .key = S.enter })) if (cur) |k| {
+            return .{ .open = .{ .path = s.order.items[k], .staged = s.order_g.items[k] == .staged } };
+        };
+        return null;
+    }
+
+    fn clearChosenKeepAnchor(s: *Scm) void {
+        for (s.chosen.items) |p| s.gpa.free(p);
+        s.chosen.clearRetainingCapacity();
+    }
+
+    /// A group's changes as a tree: folders that close, with buttons for
+    /// every file under them.
+    fn treeRows(s: *Scm, c: *ui.Context, g: Group, gi: usize, colors: StatusColors) Event {
+        const t = c.theme;
+        const a = c.alloc();
+        var ev: Event = .none;
+        var list: std.ArrayList(git.Change) = .empty;
+        for (s.changes) |ch| if (groupOf(ch, g)) list.append(a, ch) catch {};
+        std.mem.sort(git.Change, list.items, {}, struct {
+            fn lt(_: void, x: git.Change, y: git.Change) bool {
+                return std.mem.lessThan(u8, x.path, y.path);
+            }
+        }.lt);
+        const paths = a.alloc([]const u8, list.items.len) catch return ev;
+        for (list.items, paths) |ch, *p| p.* = ch.path;
+        for (scmtree.build(a, paths, &s.closed[gi])) |nd| {
+            const indent = 22 + @as(f32, @floatFromInt(nd.depth)) * 12;
+            if (!nd.folder) {
+                const r = s.changeRow(c, list.items[nd.lo], g, colors, indent);
+                if (r != .none) ev = r;
+                continue;
+            }
+            ui.keyed(c, .{ gi, std.hash.Wyhash.hash(1, nd.path) });
+            const open = !s.closed[gi].contains(nd.path);
+            const row = ui.div(c).row().wFull().h(22).pl(indent - 14).pr(6).gap(6).itemsCenter().hover(t.surface_hover);
+            ui.icon(c, if (open) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
+            ui.icon(c, "folder", .{ .size = 12, .color = t.muted });
+            ui.text(c, nd.name, .{ .size = 13 });
+            ui.spacer(c);
+            var acted = false;
+            if (row.hovered()) {
+                const under = paths[nd.lo..nd.hi];
+                switch (g) {
+                    .staged => if (rowButton(c, "minus")) {
+                        ev = .{ .unstage = under };
+                        acted = true;
+                    },
+                    else => {
+                        if (g != .merge and rowButton(c, "arrow.clockwise")) {
+                            ev = .{ .discard = under };
+                            acted = true;
+                        }
+                        if (rowButton(c, "plus")) {
+                            ev = .{ .stage = under };
+                            acted = true;
+                        }
+                    },
+                }
+            }
+            if (row.clicked() and !acted) {
+                if (open) {
+                    if (s.gpa.dupe(u8, nd.path)) |k| s.closed[gi].put(s.gpa, k, {}) catch s.gpa.free(k) else |_| {}
+                } else if (s.closed[gi].fetchRemove(nd.path)) |kv| s.gpa.free(kv.key);
+                c.changed = true;
+            }
+            row.end();
+        }
+        return ev;
+    }
+
+    fn changeRow(s: *Scm, c: *ui.Context, ch: git.Change, g: Group, colors: StatusColors, indent: f32) Event {
         const t = c.theme;
         var act: Event = .none;
         ui.keyed(c, .{ @intFromEnum(g), std.hash.Wyhash.hash(0, ch.path) });
-        s.order.append(c.alloc(), ch.path) catch {};
+        s.order.append(s.gpa, ch.path) catch {};
+        s.order_g.append(s.gpa, g) catch {};
         const on = s.isChosen(ch.path);
-        const row = ui.div(c).row().wFull().h(22).pl(if (s.tree) 36 else 22).pr(6).gap(6).itemsCenter().bg(if (on) t.accent.alpha(0.15) else .transparent).hover(t.surface_hover);
+        const row = ui.div(c).row().wFull().h(22).pl(indent).pr(6).gap(6).itemsCenter().bg(if (on) t.accent.alpha(0.15) else .transparent).hover(t.surface_hover);
         const name = std.fs.path.basenamePosix(ch.path);
         icons.file(c, name);
         const st = ch.status();

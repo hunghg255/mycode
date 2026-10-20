@@ -52,6 +52,10 @@ pub const Confirm = enum {
     close_project,
     discard_hunk_closed,
     abort_op,
+    merge,
+    rebase,
+    reset,
+    revert,
 };
 
 pub const Workbench = struct {
@@ -84,7 +88,7 @@ pub const Workbench = struct {
     confirm_arg: std.ArrayList(u8) = .empty,
     confirm_title: std.ArrayList(u8) = .empty,
     confirm_text: std.ArrayList(u8) = .empty,
-    confirm_buttons: [3][]const u8 = .{ "", "", "" },
+    confirm_buttons: [4][]const u8 = .{ "", "", "", "" },
     confirm_n: usize = 2,
     /// Toasts with buttons, by what their button does.
     toast_undo_commit: u64 = 0,
@@ -220,7 +224,7 @@ pub const Workbench = struct {
         wb.confirm_title.appendSlice(wb.gpa, title) catch {};
         wb.confirm_text.clearRetainingCapacity();
         wb.confirm_text.appendSlice(wb.gpa, text) catch {};
-        wb.confirm_n = @min(buttons.len, 3);
+        wb.confirm_n = @min(buttons.len, 4);
         for (buttons[0..wb.confirm_n], 0..) |b, i| wb.confirm_buttons[i] = b;
         wb.confirm.show();
     }
