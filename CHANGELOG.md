@@ -56,6 +56,9 @@ needs a `## <version>` section here, or its build fails.
   tooltips on the branch, the folder and the caret's place, the indentation's menu with checks and **Convert
   Indentation to Tabs** and **to Spaces**, a menu for the line endings, and for a picture its size, bytes and zoom,
   for a diff its files, changes and lines, for a terminal its folder and size in cells.
+- The Zig build's welcome page is the Go app's: the logo beside the name and "a small, quick code editor", a **Start**
+  list (**Quick Open…**, **Find in Files**, **Command Palette…**, **New File**, **Toggle Terminal**, **Toggle
+  Sidebar**) with their keys as keycaps, and the recent folders with their parent folders.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

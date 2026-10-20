@@ -511,55 +511,105 @@ fn updateSymbols(wb: *Workbench, d: *Doc) void {
     wb.quick.syms = wb.syms;
 }
 
+/// While no tab is open, as the Go app's: the logo, the name and what it
+/// is, the commands to start with and their keys, the folders opened last.
 fn welcome(wb: *Workbench, c: *ui.Context) void {
     const t = c.theme;
-    ui.column(c, .{ .width = .fill, .height = .fill, .align_items = .center, .justify = .center, .gap = 10, .clip = true });
+    const p = wb.shell.palette;
+    const matrix = std.mem.eql(u8, wb.shell.store.s.theme, "matrix");
+    ui.column(c, .{ .width = .fill, .height = .fill, .align_items = .center, .justify = .center, .padding = .{ .top = 40, .right = 24, .bottom = 64, .left = 24 }, .clip = true });
     defer ui.end(c);
-    // The Matrix's rain falls behind it while the window has the keyboard.
-    if (std.mem.eql(u8, wb.shell.store.s.theme, "matrix")) {
-        const p = wb.shell.palette;
-        // Still where the system asks for less motion.
-        @import("rain.zig").draw(c, &wb.shell.rain, c.size.w, c.size.h, .hex(p.text), .hex(p.accent), wb.shell.has_focus and !ui.motion.reduced(c));
+    // The Matrix's rain falls behind it while the window has the keyboard,
+    // still where the system asks for less motion.
+    if (matrix) @import("rain.zig").draw(c, &wb.shell.rain, c.size.w, c.size.h, .hex(p.text), .hex(p.accent), wb.shell.has_focus and !ui.motion.reduced(c));
+    // Over the rain, which would run through the words, on a card.
+    const content = ui.div(c).column().w(if (matrix) 428 else 380).gap(32);
+    if (matrix) _ = content.p(24).rounded(12).bg(t.background.alpha(0.88)).border(t.border);
+    defer content.end();
+    {
+        const head = ui.div(c).row().gap(16).itemsCenter();
+        wb.shell.logo(c, 52);
+        const words = ui.div(c).column().gap(3);
+        ui.text(c, "MyCode", .{ .size = 26, .weight = .semibold, .color = t.text });
+        ui.text(c, "a small, quick code editor · by hunghg255", .{ .size = 13, .color = t.muted });
+        words.end();
+        head.end();
     }
-    wb.shell.logo(c, 96);
-    ui.text(c, "MyCode", .{ .size = 36, .weight = .bold, .color = t.muted });
-    ui.text(c, wb.name(), .{ .size = 14, .color = t.muted });
-    _ = c.leaf(.{ .height = .{ .px = 12 } }, .none, null);
-    const rows = [_]struct { label: []const u8, keys: []const u8, cmd: Cmd }{
-        .{ .label = "Go to File", .keys = ui.keys.label("⌘P"), .cmd = .quick_open },
-        .{ .label = "Show All Commands", .keys = ui.keys.label("⇧⌘P"), .cmd = .command_palette },
-        .{ .label = "Find in Files", .keys = ui.keys.label("⇧⌘F"), .cmd = .find_in_files },
-        .{ .label = "Open Folder", .keys = ui.keys.label("⌘O"), .cmd = .open_folder },
-        .{ .label = "Open Recent", .keys = "Ctrl+R", .cmd = .open_recent },
-        .{ .label = "Toggle Terminal", .keys = "Ctrl+`", .cmd = .toggle_terminal },
-    };
-    for (rows) |r| {
-        const row = ui.div(c).row().w(320).h(26).px(8).gap(8).itemsCenter().rounded(4).hover(t.surface_hover);
-        ui.text(c, r.label, .{ .size = 13, .color = t.muted });
-        ui.spacer(c);
-        ui.text(c, r.keys, .{ .size = 12, .color = t.muted, .mono = true });
-        if (row.clicked()) run_mod.run(wb, c, r.cmd);
-        row.end();
+    {
+        const sec = section(c, "Start");
+        const actions = [_]struct { []const u8, []const u8, Cmd }{
+            .{ "magnifyingglass", "Quick Open…", .quick_open },
+            .{ "magnifyingglass", "Find in Files", .find_in_files },
+            .{ "chevron.right", "Command Palette…", .command_palette },
+            .{ "plus.square", "New File", .new_file },
+            .{ "terminal", "Toggle Terminal", .toggle_terminal },
+            .{ "sidebar.left", "Toggle Sidebar", .toggle_sidebar },
+        };
+        for (actions) |a| {
+            c.keyed(a[1].ptr);
+            const row = ui.div(c).row().wFull().py(6).px(10).gap(10).itemsCenter().rounded(6).hover(t.surface_hover);
+            icons.sym(c, a[0], .{ .size = 13, .color = if (row.hovered()) t.accent else t.muted });
+            const label = ui.div(c).grow();
+            ui.text(c, a[1], .{ .size = 13, .color = t.text });
+            label.end();
+            caps(c, @import("shell.zig").Shell.keyLabel(wb.shell, c, a[2]));
+            if (row.clicked()) run_mod.run(wb, c, a[2]);
+            row.end();
+        }
+        sec.end();
     }
-    // The recent folders.
+    // The folders opened last, but this one.
     const recent = wb.shell.state.f.recent;
     var others: usize = 0;
     for (recent) |r| if (!std.mem.eql(u8, r, wb.root)) {
         others += 1;
     };
-    if (others > 0) {
-        _ = c.leaf(.{ .height = .{ .px = 10 } }, .none, null);
-        ui.text(c, "Recent", .{ .size = 12, .weight = .semibold, .color = t.muted });
-        for (recent[0..@min(recent.len, 6)]) |r| {
-            if (std.mem.eql(u8, r, wb.root)) continue;
-            c.keyed(r.ptr);
-            const row = ui.div(c).row().w(320).h(24).px(8).gap(8).itemsCenter().rounded(4).hover(t.surface_hover);
-            ui.text(c, std.fs.path.basename(r), .{ .size = 13, .color = t.accent });
-            ui.text(c, r, .{ .size = 11, .color = t.muted });
-            // Ctrl+click (⌘ on macOS): in a new window.
-            if (row.clicked()) wb.shell.openFolder(r, c.input.ctrl or c.input.cmd);
-            row.end();
-        }
+    if (others == 0) return;
+    const sec = section(c, "Recent");
+    defer sec.end();
+    var shown: usize = 0;
+    for (recent) |r| {
+        if (shown == 6) break;
+        if (std.mem.eql(u8, r, wb.root)) continue;
+        shown += 1;
+        c.keyed(r.ptr);
+        const row = ui.div(c).row().wFull().py(6).px(10).gap(10).itemsCenter().rounded(6).hover(t.surface_hover);
+        icons.sym(c, "folder", .{ .size = 13, .color = t.accent });
+        ui.text(c, std.fs.path.basename(r), .{ .size = 13, .color = t.text });
+        ui.text(c, std.fs.path.dirname(r) orelse "", .{ .size = 12, .color = t.muted.alpha(0.7) });
+        const ri = row.interaction();
+        row.end();
+        ui.tooltip(c, ri, r);
+        // Ctrl+click (⌘ on macOS): in a new window.
+        if (ri.clicked) wb.shell.openFolder(r, c.input.ctrl or c.input.cmd);
+    }
+}
+
+/// A titled group of the welcome page, titled as the sidebar's views.
+fn section(c: *ui.Context, title: []const u8) ui.Div {
+    const col = ui.div(c).column().wFull().gap(2);
+    var buf: [32]u8 = undefined;
+    const upper = std.ascii.upperString(&buf, title[0..@min(title.len, buf.len)]);
+    const head = ui.div(c).px(10).pb(6);
+    ui.text(c, c.print("{s}", .{upper}), .{ .size = 11, .weight = .semibold, .color = c.theme.muted });
+    head.end();
+    return col;
+}
+
+/// Keys as the caps of a keyboard, one a cap: "Ctrl+Shift+P" as three.
+fn caps(c: *ui.Context, label: []const u8) void {
+    if (label.len == 0) return;
+    const t = c.theme;
+    const row = ui.div(c).row().gap(3);
+    defer row.end();
+    var it = std.mem.splitScalar(u8, label, '+');
+    while (it.next()) |k0| {
+        // "Ctrl++" ends with the plus key itself.
+        const k = if (k0.len == 0) "+" else k0;
+        if (k0.len == 0 and it.peek() != null and it.peek().?.len == 0) _ = it.next();
+        const cap = ui.div(c).h(18).minW(18).px(4).center().rounded(4).bg(t.surface_hover).border(t.border);
+        ui.text(c, k, .{ .size = 11, .color = t.muted });
+        cap.end();
     }
 }
 
