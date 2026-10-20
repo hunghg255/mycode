@@ -136,6 +136,9 @@ needs a `## <version>` section here, or its build fails.
 - The installed Zig build sets up the `mycode` command and File Explorer's **Open with MyCode** as it starts, as the
   Go app does, unless they were uninstalled; the button between a Markdown or SVG file's preview and its source
   sits at the end of the tab strip.
+- Fixed in the Zig build: erasing the query of the command palette or quick open past its `>`, `@` or `:` no longer
+  quits the app, nor does closing a project; the window of the last project closed stays, with **No Folder
+  Open**, a button to open one and the recent folders, as the Go app's.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

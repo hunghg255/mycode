@@ -204,19 +204,13 @@ pub const QuickOpen = struct {
         d.panelStyle().radius = 10;
         d.panelStyle().clip = true;
         const t = c.theme;
-        const text = q.query.text();
-        const mode: enum { files, commands, symbols, line } = if (std.mem.startsWith(u8, text, ">"))
-            .commands
-        else if (std.mem.startsWith(u8, text, "@"))
-            .symbols
-        else if (std.mem.startsWith(u8, text, ":"))
-            .line
-        else
-            .files;
+        // What it searches, as the field's icon and placeholder say before
+        // this frame's typing; the rows take it again after.
+        const shown_mode = modeOf(q.query.text());
         var pick: ?Pick = null;
         // The field, with the mode's icon.
         const head = ui.div(c).row().wFull().px(14).py(10).gap(10).itemsCenter();
-        icons.sym(c, switch (mode) {
+        icons.sym(c, switch (shown_mode) {
             .commands => "chevron.right",
             .symbols => "circle",
             else => "magnifyingglass",
@@ -227,13 +221,17 @@ pub const QuickOpen = struct {
             c.focus = fid;
             q.focus -= 1;
         }
-        const field = ui.textField(c, &q.query, .{ .width = .fill, .bare = true, .size = 14, .label = "Quick Open", .placeholder = switch (mode) {
+        const field = ui.textField(c, &q.query, .{ .width = .fill, .bare = true, .size = 14, .label = "Quick Open", .placeholder = switch (shown_mode) {
             .commands => "Run a command by name",
             .symbols => "Go to a symbol by name",
             else => "Search files by name",
         } });
         head.end();
         _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = t.border }, .none, null);
+        // The text as typed in this frame: a Backspace may have taken the
+        // prefix away, and the rows are of what it searches now.
+        const text = q.query.text();
+        const mode = modeOf(text);
         q.filter(c);
         const n = q.count();
         if (c.shortcut(.{ .key = ui.Shortcut.down })) {
@@ -353,6 +351,16 @@ pub const QuickOpen = struct {
         return .{ .file = q.files[q.hits.items[i].index] };
     }
 };
+
+const Mode = enum { files, commands, symbols, line };
+
+/// What a query searches, by its first character.
+fn modeOf(text: []const u8) Mode {
+    if (std.mem.startsWith(u8, text, ">")) return .commands;
+    if (std.mem.startsWith(u8, text, "@")) return .symbols;
+    if (std.mem.startsWith(u8, text, ":")) return .line;
+    return .files;
+}
 
 pub fn emptyText(c: *ui.Context, msg: []const u8) void {
     const b = ui.div(c).wFull().px(16).py(12);

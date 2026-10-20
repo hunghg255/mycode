@@ -21,6 +21,10 @@ const winshell = @import("winshell.zig");
 const Dialog = enum { none, folder, folder_new_window, file };
 
 pub const Shell = struct {
+    /// Projects closed in this frame (`closeProjectNow`).
+    dropping: std.ArrayList(*Workbench) = .empty,
+    /// Commands asked for while no folder is open (`queue`).
+    pending: std.ArrayList(Cmd) = .empty,
     /// A project to close, and one to keep closing the others, from the
     /// rail's menu (after the rail is built).
     closing: ?*Workbench = null,
@@ -89,6 +93,8 @@ pub const Shell = struct {
     pub fn destroy(sh: *Shell) void {
         for (sh.projects.items) |wb| wb.destroy();
         sh.projects.deinit(sh.gpa);
+        sh.pending.deinit(sh.gpa);
+        sh.dropping.deinit(sh.gpa);
         if (sh.title) |t| sh.gpa.free(t);
         sh.gpa.destroy(sh);
     }
@@ -108,7 +114,10 @@ pub const Shell = struct {
     }
 
     pub fn queue(sh: *Shell, cmd: Cmd) void {
-        if (sh.active()) |wb| wb.queue(cmd);
+        if (sh.active()) |wb| return wb.queue(cmd);
+        // No folder open: the window's own commands run (Open Folder…).
+        sh.pending.append(sh.gpa, cmd) catch return;
+        if (sh.window) |w| w.redraw();
     }
 
     pub fn titleChanged(sh: *Shell) void {
@@ -187,13 +196,31 @@ pub const Shell = struct {
         return false;
     }
 
+    /// Closes a project at the end of the frame: the frame may be building
+    /// it still (its command closed it, or its menu).
     pub fn closeProjectNow(sh: *Shell, wb: *Workbench) void {
+        if (std.mem.indexOfScalar(*Workbench, sh.dropping.items, wb) != null) return;
+        sh.dropping.append(sh.gpa, wb) catch return;
+        if (sh.window) |w| w.redraw();
+    }
+
+    /// The projects closed in this frame, gone once nothing builds them.
+    fn dropClosed(sh: *Shell) void {
+        while (sh.dropping.items.len > 0) sh.dropNow(sh.dropping.pop().?);
+    }
+
+    fn dropNow(sh: *Shell, wb: *Workbench) void {
         const i = std.mem.indexOfScalar(*Workbench, sh.projects.items, wb) orelse return;
         sh.main.keepSession(wb);
         _ = sh.projects.orderedRemove(i);
         wb.destroy();
+        // The last one gone, the window stays, as the Go app's, with no
+        // folder open.
         if (sh.projects.items.len == 0) {
-            if (sh.window) |w| w.close();
+            sh.current = 0;
+            sh.title_dirty = true;
+            if (sh.window) |w| w.setTitle("MyCode");
+            sh.main.saveState();
             return;
         }
         sh.current = @min(sh.current, sh.projects.items.len - 1);
@@ -470,9 +497,10 @@ pub const Shell = struct {
             const box = ui.div(c).column().grow().hFull();
             wb.view(c);
             box.end();
-        }
+        } else sh.noFolder(c);
         sh.recentBox(c);
         if (sh.main.focused == sh or sh.main.shells.items.len == 1) if (sh.main.updates.view(c)) sh.main.quit();
+        defer sh.dropClosed();
         // Projects out of sight whose terminals rang or asked attention:
         // their squares are marked, their tips say what for.
         for (sh.projects.items, 0..) |wb, i| if (i != sh.current) {
@@ -482,6 +510,48 @@ pub const Shell = struct {
                 else => {},
             };
         };
+    }
+
+    /// The window with no folder open, as the Go app's: what to do, a button
+    /// that opens one, the folders opened last; its keys and the menus'
+    /// window commands work.
+    fn noFolder(sh: *Shell, c: *ui.Context) void {
+        const t = c.theme;
+        while (sh.pending.items.len > 0) _ = sh.run(c, sh.pending.orderedRemove(0));
+        if (c.shortcut(.{ .key = 'o', .cmd = true })) _ = sh.run(c, .open_folder);
+        if (c.shortcut(.{ .key = 'r', .cmd = true })) _ = sh.run(c, .open_recent);
+        const page = ui.div(c).column().grow().hFull().center().gap(8).p(24);
+        defer page.end();
+        sh.logo(c, 52);
+        _ = c.leaf(.{ .height = .{ .px = 8 } }, .none, null);
+        ui.text(c, "No Folder Open", .{ .size = 15, .weight = .semibold, .color = t.text });
+        ui.text(c, "Open a folder to browse its files, search them and track their changes.", .{ .size = 12.5, .color = t.muted });
+        _ = c.leaf(.{ .height = .{ .px = 6 } }, .none, null);
+        if (ui.button(c, "Open Folder…", .{ .variant = .primary, .size = 13 }).clicked) _ = sh.run(c, .open_folder);
+        // The folders opened last.
+        const recent = sh.state.f.recent;
+        if (recent.len == 0) return;
+        _ = c.leaf(.{ .height = .{ .px = 12 } }, .none, null);
+        const list = ui.div(c).column().w(380).gap(2);
+        defer list.end();
+        ui.text(c, "RECENT", .{ .size = 11, .weight = .semibold, .color = t.muted });
+        for (recent[0..@min(recent.len, 6)]) |r| {
+            c.keyed(r.ptr);
+            const row = ui.div(c).row().wFull().py(6).px(10).gap(10).itemsCenter().rounded(6).hover(t.surface_hover);
+            icons.sym(c, "folder", .{ .size = 13, .color = t.accent });
+            ui.text(c, std.fs.path.basename(r), .{ .size = 13, .color = t.text });
+            const dir = ui.div(c).w(0).grow().clip();
+            ui.text(c, std.fs.path.dirname(r) orelse "", .{ .size = 12, .color = t.muted.alpha(0.7) });
+            dir.end();
+            const ri = row.interaction();
+            row.end();
+            ui.tooltip(c, ri, r);
+            if (ri.clicked) {
+                if (fs.isDirectory(sh.io, r)) _ = sh.addProject(r) catch {};
+                c.changed = true;
+                return;
+            }
+        }
     }
 
     /// Shows an open dialog after the frame, from the event loop: a dialog
