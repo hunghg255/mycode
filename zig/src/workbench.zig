@@ -115,6 +115,9 @@ pub const Workbench = struct {
     review_menu: ui.Menu = .{},
     indent_menu: ui.Menu = .{},
     bell: bool = false,
+    /// What a terminal of it asked attention for, out of sight.
+    alert_buf: [256]u8 = undefined,
+    alert_len: usize = 0,
     /// The project's favicon or logo, read once for the rail.
     logo: ?@import("logo.zig").Logo = null,
     logo_read: bool = false,
@@ -385,8 +388,10 @@ pub const Workbench = struct {
         }
         wbeditor.statusBar(wb, c);
         ui.end(c);
+        wb.editors.panel_rect = if (wb.panel.open) wb.panel.rect else null;
         wb.editors.endDrag(c);
         wbfiles.fileDragFrame(wb, c);
+        wbfiles.panelDragFrame(wb, c);
         wbfiles.overlays(wb, c);
     }
 

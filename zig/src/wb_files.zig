@@ -77,6 +77,42 @@ pub fn fileDragFrame(wb: *Workbench, c: *ui.Context) void {
     c.changed = true;
 }
 
+/// A terminal's chip dragged from the panel: let go over the columns, the
+/// terminal goes into one, where it lands.
+pub fn panelDragFrame(wb: *Workbench, c: *ui.Context) void {
+    const dg = &(wb.panel.drag orelse return);
+    const ed = &wb.editors;
+    const m = c.input.mouse;
+    if (c.input.down) {
+        if (!dg.moving and (@abs(m.x - dg.start.x) > 8 or @abs(m.y - dg.start.y) > 8)) dg.moving = true;
+        if (dg.moving) {
+            c.wants_moves = true;
+            if (tabdrag.at(ed, m)) |t| tabdrag.marker(c, ed, t);
+            const ghost = ui.div(c).row().absolute().offset(m.x + 10, m.y + 8).px(8).py(4).gap(6).itemsCenter().rounded(4).bg(c.theme.surface_hover).border(c.theme.border);
+            ui.icon(c, "terminal", .{ .size = 11, .color = c.theme.muted });
+            ui.text(c, dg.term.name(), .{ .size = 12 });
+            ghost.end();
+        }
+        return;
+    }
+    defer wb.panel.drag = null;
+    if (!dg.moving) return;
+    const t = tabdrag.at(ed, m) orelse return;
+    const i = std.mem.indexOfScalar(*Term, wb.panel.terms.items, dg.term) orelse return;
+    const ci = tabdrag.column(ed, t, null) orelse return;
+    const term = wb.panel.take(i);
+    const it = ed.newItem(.{ .terminal = term }, false) catch return wb.panel.add(term);
+    term.focus = true;
+    const col = ed.cols.items[ci];
+    const at = @min(t.idx orelse col.items.items.len, col.items.items.len);
+    col.items.insert(wb.gpa, at, it) catch {
+        it.destroy(wb.gpa);
+        return;
+    };
+    ed.show(.{ .col = ci, .idx = at });
+    c.changed = true;
+}
+
 /// Files let go at `p` over the columns: each opens where it lands,
 /// between tabs, in a column, or in a new one at a column's edge. False
 /// when `p` is over no column.

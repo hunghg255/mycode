@@ -95,6 +95,18 @@ pub fn endDrag(e: *Editors, c: *ui.Context) void {
     }
     defer e.drag = null;
     if (!dg.moving) return;
+    // A terminal let go over the panel goes there.
+    if (e.panel_rect) |pr| if (pr.contains(c.input.mouse)) {
+        const it = e.at(dg.from);
+        if (it.body == .terminal) {
+            const term = it.body.terminal;
+            _ = e.take(dg.from);
+            e.gpa.destroy(it);
+            e.request = .{ .to_panel = term };
+            c.changed = true;
+        }
+        return;
+    };
     const t = at(e, c.input.mouse) orelse return;
     var from = dg.from;
     // A tab alone in its column has nowhere new to go beside it.

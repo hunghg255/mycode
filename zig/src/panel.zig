@@ -62,6 +62,10 @@ pub const Term = struct {
     rect: ?ui.Rect = null,
     /// Rang its bell or asked for attention while out of sight.
     bell: bool = false,
+    /// What it asked attention for last: a notification's text (OSC 9,
+    /// OSC 777), or its bell.
+    alert_buf: [256]u8 = undefined,
+    alert_len: usize = 0,
     focus: bool = true,
 
     pub const Options = struct {
@@ -111,6 +115,16 @@ pub const Term = struct {
         term.gpa.destroy(term);
     }
 
+    fn setAlert(term: *Term, parts: []const []const u8) void {
+        var w: std.Io.Writer = .fixed(&term.alert_buf);
+        for (parts) |p| w.writeAll(p) catch {};
+        term.alert_len = w.buffered().len;
+    }
+
+    pub fn alert(term: *const Term) []const u8 {
+        return term.alert_buf[0..term.alert_len];
+    }
+
     pub fn name(term: *const Term) []const u8 {
         if (term.title_len > 0) return term.title_buf[0..term.title_len];
         if (term.profile_len > 0) return term.profile_buf[0..term.profile_len];
@@ -121,7 +135,15 @@ pub const Term = struct {
         const term: *Term = @ptrCast(@alignCast(ctx.?));
         switch (ev) {
             .output => {},
-            .bell => term.bell = true,
+            .bell => {
+                term.bell = true;
+                term.setAlert(&.{ "Bell from ", term.name() });
+            },
+            .notify => {
+                term.bell = true;
+                const n = t.notification();
+                if (n.len > 0) term.setAlert(&.{n}) else term.setAlert(&.{ "Notification from ", term.name() });
+            },
             .title => {
                 const title = t.title(term.gpa) catch return;
                 defer term.gpa.free(title);
@@ -205,6 +227,10 @@ pub const Panel = struct {
     chip_at: usize = 0,
     /// Asked of the workbench: a new terminal (of a profile), a move to a column.
     request: ?Request = null,
+    /// A chip pressed, dragged to a column (`wb_files.panelDragFrame`).
+    drag: ?struct { term: *Term, start: ui.Point, moving: bool = false } = null,
+    /// Where it was drawn last: tabs of terminals dropped there come in.
+    rect: ?ui.Rect = null,
 
     pub const Request = union(enum) { new: ?usize, to_column: *Term, set_default: usize };
 
@@ -246,8 +272,11 @@ pub const Panel = struct {
             i -= 1;
             if (p.terms.items[i].exited) p.take(i).destroy();
         }
-        ui.column(c, .{ .width = .fill, .height = .fill, .background = t.background });
-        defer ui.end(c);
+        const whole = ui.div(c).column().wFull().hFull().bg(t.background);
+        defer {
+            if (whole.interaction().rect) |r| p.rect = r;
+            whole.end();
+        }
         {
             const bar = ui.div(c).row().wFull().h(30).px(8).gap(4).itemsCenter().bg(chrome);
             defer bar.end();
@@ -270,6 +299,7 @@ pub const Panel = struct {
                     p.active = k;
                     term.focus = true;
                 }
+                if (ci.pressed and c.input.pressed and p.drag == null) p.drag = .{ .term = term, .start = c.input.mouse };
                 if (ui.contextMenu(c, &p.chip_menu, ci)) |m| {
                     defer m.end();
                     p.chip_at = k;

@@ -110,6 +110,8 @@ pub const Editors = struct {
     /// Each column's strip and body as last laid out, for drops.
     strip_rects: [16]ui.Rect = undefined,
     body_rects: [16]ui.Rect = undefined,
+    /// The panel as last laid out: a terminal's tab let go there goes to it.
+    panel_rect: ?ui.Rect = null,
     /// Each tab as last laid out, for where a drop between tabs goes.
     tab_rects: std.ArrayList(TabRect) = .empty,
     /// Asked of the workbench by the tab menu.

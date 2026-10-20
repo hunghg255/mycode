@@ -412,10 +412,23 @@ pub const Shell = struct {
         }
         sh.recentBox(c);
         if (sh.main.focused == sh or sh.main.shells.items.len == 1) if (sh.main.updates.view(c)) sh.main.quit();
-        // Projects out of sight that rang their terminal's bell.
-        for (sh.projects.items, 0..) |wb, i| if (i != sh.current) for (wb.panel.terms.items) |t| if (t.bell) {
-            wb.bell = true;
+        // Projects out of sight whose terminals rang or asked attention:
+        // their squares are marked, their tips say what for.
+        for (sh.projects.items, 0..) |wb, i| if (i != sh.current) {
+            for (wb.panel.terms.items) |t| if (t.bell) noteAlert(wb, t);
+            for (wb.editors.cols.items) |col| for (col.items.items) |it| switch (it.body) {
+                .terminal => |t| if (t.bell) noteAlert(wb, t),
+                else => {},
+            };
         };
+    }
+
+    fn noteAlert(wb: *Workbench, t: *const @import("panel.zig").Term) void {
+        wb.bell = true;
+        const a = t.alert();
+        const n = @min(a.len, wb.alert_buf.len);
+        @memcpy(wb.alert_buf[0..n], a[0..n]);
+        wb.alert_len = n;
     }
 
     fn initials(c: *ui.Context, name: []const u8) []const u8 {
@@ -460,7 +473,8 @@ pub const Shell = struct {
                 sh.rail_rects[i] = r;
             };
             if (si.pressed and c.input.pressed and sh.rail_drag == null) sh.rail_drag = .{ .from = i, .start = c.input.mouse };
-            ui.tooltip(c, si, if (i < 9) c.print("{s}\n{s}\n{s}", .{ wb.name(), wb.root, c.print("Ctrl+Alt+{d}", .{i + 1}) }) else c.print("{s}\n{s}", .{ wb.name(), wb.root }));
+            const alert = if (wb.bell and wb.alert_len > 0) c.print("\n{s}", .{wb.alert_buf[0..wb.alert_len]}) else "";
+            ui.tooltip(c, si, if (i < 9) c.print("{s}\n{s}\n{s}{s}", .{ wb.name(), wb.root, c.print("Ctrl+Alt+{d}", .{i + 1}), alert }) else c.print("{s}\n{s}{s}", .{ wb.name(), wb.root, alert }));
             if (si.clicked) go = i;
             if (ui.contextMenu(c, &sh.rail_menu, si)) |m| {
                 defer m.end();
