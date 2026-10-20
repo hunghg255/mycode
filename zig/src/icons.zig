@@ -106,6 +106,18 @@ fn drawSvg(c: *ui.Context, key: []const u8, bytes: []const u8, color: ?ui.Color,
     _ = ui.svg(c, bytes, .{ .width = size, .height = size, .color = color, .key = c.print("mycode-icon:{s}", .{key}) });
 }
 
+/// The title bar's glyphs, Lucide's as the Go app has them.
+pub const Glyph = enum { sidebar, sidebar_right, panel };
+
+pub fn glyph(c: *ui.Context, g: Glyph, size: f32, color: ui.Color) void {
+    const bytes = switch (g) {
+        .sidebar => lucideSvg("<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M9 3v18\"/>"),
+        .sidebar_right => lucideSvg("<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M15 3v18\"/>"),
+        .panel => lucideSvg("<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 15h18\"/>"),
+    };
+    drawSvg(c, @tagName(g), bytes, color, size);
+}
+
 /// A file's icon, by its name.
 pub fn file(c: *ui.Context, name: []const u8) void {
     fileSized(c, name, 14);

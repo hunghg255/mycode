@@ -12,7 +12,7 @@ It needs Zig 0.17 and a checkout of myzig two folders up (`../../myzig`), with i
 ```sh
 zig build                       # zig-out/bin/mycode.exe
 zig build test                  # unit tests
-zig build -Doptimize=ReleaseFast -Dstrip=true -Dwindows-gui=true --prefix dist   # dist/bin/mycode.exe
+zig build -Doptimize=ReleaseSafe -Dwindows-gui=true   # zig-out/bin/mycode.exe, as the installer has it
 zig-out/bin/mycode.exe <folder> --myzig-snapshot=shot.png --myzig-script="click:README.md"   # headless
 ```
 

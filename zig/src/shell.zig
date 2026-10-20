@@ -13,8 +13,11 @@ const Main = @import("main.zig").Main;
 const panel_mod = @import("panel.zig");
 const Profile = @import("termprofiles.zig").Profile;
 const keymap = @import("keymap.zig");
+const icons = @import("icons.zig");
 const quickopen = @import("quickopen.zig");
 const winshell = @import("winshell.zig");
+
+const Dialog = enum { none, folder, folder_new_window, file };
 
 pub const Shell = struct {
     gpa: std.mem.Allocator,
@@ -48,6 +51,8 @@ pub const Shell = struct {
     rain: @import("rain.zig").Rain = .{},
     /// The window has the keyboard (the rain moves only then).
     has_focus: bool = true,
+    /// An open dialog asked for, shown after the frame (`askLater`).
+    dialog: Dialog = .none,
     /// The family of `fontFamily`'s list that is installed, for the
     /// settings' version it was looked for in.
     mono_family: ?[]const u8 = null,
@@ -264,11 +269,11 @@ pub const Shell = struct {
     pub fn run(sh: *Shell, c: *ui.Context, cmd: Cmd) bool {
         const st = sh.store;
         switch (cmd) {
-            .open_folder, .open_folder_new_window => {
-                const paths = (myzig.dialog.open(sh.gpa, .{ .title = "Open Folder", .files = false, .directories = true }) catch return true) orelse return true;
-                defer myzig.dialog.freePaths(sh.gpa, paths);
-                if (paths.len > 0) sh.openFolder(paths[0], cmd == .open_folder_new_window);
-            },
+            .open_folder, .open_folder_new_window, .open_file => sh.askLater(switch (cmd) {
+                .open_folder => .folder,
+                .open_folder_new_window => .folder_new_window,
+                else => .file,
+            }),
             .open_recent => {
                 sh.recent_query.clear();
                 sh.recent_sel = 0;
@@ -401,7 +406,10 @@ pub const Shell = struct {
         sh.tellKeyErrors();
         sh.applyTheme(c);
         sh.updateTitle();
-        ui.row(c, .{ .width = .fill, .height = .fill, .align_items = .stretch, .background = .hex(sh.palette.editor) });
+        const whole = ui.div(c).column().wFull().hFull().bg(.hex(sh.palette.editor));
+        defer whole.end();
+        sh.titleBar(c);
+        ui.row(c, .{ .width = .fill, .grow = 1, .align_items = .stretch });
         defer ui.end(c);
         if (sh.store.s.projectTabs) sh.rail(c);
         if (sh.active()) |wb| {
@@ -421,6 +429,93 @@ pub const Shell = struct {
                 else => {},
             };
         };
+    }
+
+    /// Shows an open dialog after the frame, from the event loop: a dialog
+    /// runs its own loop, which would deliver the background jobs' results
+    /// while the frame is half built.
+    fn askLater(sh: *Shell, kind: Dialog) void {
+        if (sh.dialog != .none) return;
+        sh.dialog = kind;
+        if (!@import("jobs.zig").post(sh, showDialog)) sh.dialog = .none;
+    }
+
+    fn showDialog(ctx: ?*anyopaque) callconv(.c) void {
+        const sh: *Shell = @ptrCast(@alignCast(ctx.?));
+        const kind = sh.dialog;
+        sh.dialog = .none;
+        // It opens in the project's folder.
+        const dir: []const u8 = if (sh.active()) |wb| wb.root else "";
+        const paths = (myzig.dialog.open(sh.gpa, if (kind == .file)
+            .{ .title = "Open File", .directory = dir, .multiple = true }
+        else
+            .{ .title = "Open Folder", .files = false, .directories = true, .directory = dir }) catch return) orelse return;
+        defer myzig.dialog.freePaths(sh.gpa, paths);
+        switch (kind) {
+            .none => {},
+            .folder, .folder_new_window => if (paths.len > 0) sh.openFolder(paths[0], kind == .folder_new_window),
+            .file => if (sh.active()) |wb| for (paths) |p| @import("wb_files.zig").openPath(wb, p, false),
+        }
+        if (sh.window) |w| w.redraw();
+    }
+
+    /// The title bar the window draws itself, as the Go app's: the sidebar's
+    /// button, the command center (the file and the folder; a click opens
+    /// quick open) and the panel's button, beside Windows' caption buttons.
+    /// Its empty space moves the window.
+    fn titleBar(sh: *Shell, c: *ui.Context) void {
+        const t = c.theme;
+        const p = sh.palette;
+        const area = if (sh.window) |w| w.titleBar() else myzig.TitleBarArea{};
+        const h: f32 = @floatCast(@max(area.height, 38));
+        c.title_bar_height = h;
+        const bar = ui.div(c).row().wFull().h(h).pl(@as(f32, @floatCast(area.left)) + 10).pr(@as(f32, @floatCast(area.right)) + 8).itemsCenter().bg(.hex(p.chrome));
+        defer {
+            bar.end();
+            _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = .hex(p.border) }, .none, null);
+        }
+        const wb = sh.active();
+        const right = sh.store.s.sidebarRight;
+        const sidebar_on = if (wb) |w| w.sidebar_open else false;
+        const panel_on = if (wb) |w| w.panel.open else false;
+        {
+            const side = ui.div(c).row().w(0).grow().gap(2).itemsCenter();
+            defer side.end();
+            if (!right and titleButton(c, .sidebar, sidebar_on, "Toggle Sidebar")) sh.queue(.toggle_sidebar);
+        }
+        // The command center.
+        {
+            const cc = ui.div(c).row().w(420).h(24).px(10).gap(8).center().rounded(6).bg(t.surface).border(.hex(p.border)).hover(t.surface_hover);
+            const hovered = cc.hovered();
+            ui.icon(c, "magnifyingglass", .{ .size = 11, .color = if (hovered) t.muted else t.muted.alpha(0.7) });
+            const name: []const u8 = if (wb) |w| if (w.editors.current()) |it| it.title(c) else "" else "";
+            const dirty = if (wb) |w| if (w.editors.current()) |it| it.dirty() else false else false;
+            const folder: []const u8 = if (wb) |w| std.fs.path.basename(w.root) else "";
+            if (name.len > 0) {
+                ui.text(c, if (dirty) c.print("● {s}", .{name}) else name, .{ .size = 12, .weight = .medium });
+                if (folder.len > 0) ui.text(c, folder, .{ .size = 12, .color = t.muted.alpha(0.7) });
+            } else ui.text(c, if (folder.len > 0) folder else "MyCode", .{ .size = 12, .weight = .medium, .color = t.muted });
+            const ci = cc.interaction();
+            cc.end();
+            ui.tooltip(c, ci, "Quick Open (Ctrl+P)");
+            if (ci.clicked) sh.queue(.quick_open);
+        }
+        {
+            const side = ui.div(c).row().w(0).grow().gap(2).itemsCenter().justifyEnd();
+            defer side.end();
+            if (titleButton(c, .panel, panel_on, "Toggle Terminal (Ctrl+`)")) sh.queue(.toggle_terminal);
+            if (right and titleButton(c, .sidebar_right, sidebar_on, "Toggle Sidebar")) sh.queue(.toggle_sidebar);
+        }
+    }
+
+    fn titleButton(c: *ui.Context, g: icons.Glyph, on: bool, tip: []const u8) bool {
+        const t = c.theme;
+        const b = ui.div(c).w(26).h(24).center().rounded(5).hover(t.surface_hover);
+        icons.glyph(c, g, 14, if (on) t.text else t.muted);
+        const bi = b.interaction();
+        b.end();
+        ui.tooltip(c, bi, tip);
+        return bi.clicked;
     }
 
     fn noteAlert(wb: *Workbench, t: *const @import("panel.zig").Term) void {

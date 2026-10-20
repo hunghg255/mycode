@@ -364,12 +364,6 @@ pub fn afterSave(wb: *Workbench, d: *Doc) void {
     wb.shell.fileSaved(d.path);
 }
 
-pub fn openFileDialog(wb: *Workbench) void {
-    const paths = (myzig.dialog.open(wb.gpa, .{ .title = "Open File", .directory = wb.root }) catch return) orelse return;
-    defer myzig.dialog.freePaths(wb.gpa, paths);
-    for (paths) |p| openPath(wb, p, false);
-}
-
 /// A new terminal in the panel, of a profile (the default when null).
 pub fn newTerminal(wb: *Workbench, profile: ?usize) void {
     const t = makeTerm(wb, profile, wb.root) orelse return;

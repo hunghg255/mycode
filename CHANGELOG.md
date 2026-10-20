@@ -31,6 +31,11 @@ needs a `## <version>` section here, or its build fails.
   "+" on the line; pictures sit on a checkerboard, zoom around the pointer and pan; Markdown shows local pictures;
   tabs drop between tabs and on either side of a column, a middle click closes one, and **Reopen Closed Tab** brings
   back terminals; terminals drag between the panel and the columns, and their notifications mark the project.
+- The Zig build's window has the Go app's title bar: the sidebar's button, the file and folder in the middle (a click
+  opens quick open) and the terminal's button, beside Windows' buttons. **Open Folder** and **Open File** show
+  Windows' Explorer-style dialog. The status bar names the folder and counts the file's lines. Fixed: opening a
+  file no longer quits the Zig build when its minimap is an odd width, as `"minimapWidth": 79`, and closing the tab
+  shown with its x or the middle button no longer quits it either.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

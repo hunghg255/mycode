@@ -433,7 +433,10 @@ pub const Workbench = struct {
             .explorer => {
                 // The folder's row.
                 const top = ui.div(c).row().wFull().h(22).px(10).itemsCenter();
-                ui.text(c, c.print("{s}", .{wb.name()}), .{ .size = 11, .weight = .semibold, .color = t.muted });
+                // The folder's name in capitals, as the Go app heads it.
+                const upper = c.print("{s}", .{wb.name()});
+                for (@constCast(upper)) |*ch| ch.* = std.ascii.toUpper(ch.*);
+                ui.text(c, upper, .{ .size = 11, .weight = .bold, .color = t.text });
                 if (top.clicked()) wb.explorer.state.selected = null;
                 top.end();
                 wbfiles.explorerEvent(wb, c, wb.explorer.view(c, .hex(wb.shell.palette.faint), wb.statusColors()));

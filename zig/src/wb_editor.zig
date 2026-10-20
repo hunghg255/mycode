@@ -168,15 +168,22 @@ pub fn columnsView(wb: *Workbench, c: *ui.Context, chrome: ui.Color) void {
 fn nested(wb: *Workbench, c: *ui.Context, chrome: ui.Color, i: usize) void {
     const ed = &wb.editors;
     if (i + 1 >= ed.cols.items.len) return column(wb, c, chrome, i);
-    var sp = ui.split(c, &ed.cols.items[i].width, .{ .min = 160 });
+    // The width split keeps is the column's, given back only if the
+    // column is still there (closing its last tab may close it).
+    const col = ed.cols.items[i];
+    var width = col.width;
+    var sp = ui.split(c, &width, .{ .min = 160 });
     column(wb, c, chrome, i);
     sp.second();
     nested(wb, c, chrome, i + 1);
     _ = sp.end();
+    if (std.mem.indexOfScalar(*columns.Column, ed.cols.items, col) != null) col.width = width;
 }
 
 fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
     const ed = &wb.editors;
+    // A column before it may have closed in this frame (its last tab).
+    if (ci >= ed.cols.items.len) return;
     const col = ed.cols.items[ci];
     const box = ui.div(c).column().wFull().hFull();
     defer {
@@ -191,9 +198,13 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
         }
         box.end();
     }
+    // The strip first: it may close the tab shown (its x, the middle
+    // button), whose item is then gone.
+    const tabs = col.items.items.len;
+    if (tabs > 0 or col.locked or ed.cols.items.len > 1) ed.strip(c, ci, chrome);
+    if (ci >= ed.cols.items.len or ed.cols.items[ci] != col) return;
     const it = col.current() orelse {
         if (col.locked) {
-            ed.strip(c, ci, chrome);
             ui.column(c, .{ .width = .fill, .grow = 1, .align_items = .center, .justify = .center, .gap = 8 });
             defer ui.end(c);
             ui.text(c, "This column is locked for terminals.", .{ .size = 12, .color = c.theme.muted });
@@ -201,10 +212,8 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
             return;
         }
         if (ed.cols.items.len == 1) return welcome(wb, c);
-        ed.strip(c, ci, chrome);
         return;
     };
-    ed.strip(c, ci, chrome);
     c.keyed(it);
     switch (it.body) {
         .file => |d| {
@@ -586,6 +595,16 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
             }
         }
     }
+    // The folder, as the Go app's status bar names it.
+    {
+        const fo = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
+        ui.icon(c, "folder", .{ .size = 11, .color = t.muted });
+        ui.text(c, wb.name(), .{ .size = 12, .color = t.muted });
+        const fi = fo.interaction();
+        fo.end();
+        ui.tooltip(c, fi, wb.root);
+        if (fi.clicked) myzig.shell.showInFolder(wb.root);
+    }
     if (wb.runner.busy) ui.text(c, "Git…", .{ .size = 11, .color = t.accent });
     if (wb.review.list.items.len > 0) {
         const rv = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
@@ -619,6 +638,8 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
     const col = ta.sel.caret - ta.doc.lineStart(line);
     const sel_n = ta.sel.hi() - ta.sel.lo();
     if (statusItem(c, if (sel_n > 0) c.print("Ln {d}, Col {d} ({d} selected)", .{ line + 1, col + 1, sel_n }) else c.print("Ln {d}, Col {d}", .{ line + 1, col + 1 }))) run_mod.run(wb, c, .go_to_line);
+    const lines = ta.doc.lineCount();
+    _ = statusItem(c, c.print("{d} line{s}", .{ lines, if (lines == 1) "" else "s" }));
     const unit = d.editor.indent.unit;
     const ind = ui.div(c).row().h(20).px(4).itemsCenter().rounded(3).hover(t.surface_hover);
     ui.text(c, if (std.mem.eql(u8, unit, "\t")) "Tab Size: 4" else c.print("Spaces: {d}", .{unit.len}), .{ .size = 12, .color = t.muted });

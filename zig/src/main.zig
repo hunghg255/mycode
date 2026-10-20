@@ -178,6 +178,10 @@ pub const Main = struct {
             .height = 820,
             .min_width = 640,
             .min_height = 400,
+            // The app draws its title bar (`Shell.titleBar`), under Windows'
+            // caption buttons; the menu bar's accelerators still work.
+            .title_bar = .hidden,
+            .title_bar_height = 38,
             .state = myzig.windowState(state_key),
             .on_event = .of(sh, Shell.onWindowEvent),
             .on_drop = .of(sh, Shell.onDrop),

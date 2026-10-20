@@ -28,7 +28,6 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
     const gpa = wb.gpa;
     switch (cmd) {
         .new_file => ed.newUntitled() catch {},
-        .open_file => wbfiles.openFileDialog(wb),
         .save => if (doc) |d| {
             if (d.path.len == 0) wbfiles.saveAs(wb, d) else d.save() catch |err| wb.toastError("Couldn't save", @errorName(err));
             wbfiles.afterSave(wb, d);
