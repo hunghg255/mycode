@@ -89,6 +89,11 @@ pub const Image = struct {
         return @min(1, @min(w / im.w, h / im.h));
     }
 
+    /// The zoom shown, fitted or chosen (1 is the picture's own size).
+    pub fn currentScale(im: *const Image) f32 {
+        return im.scale();
+    }
+
     fn scale(im: *const Image) f32 {
         return if (im.zoom == 0) im.fitScale(im.pane_w, im.pane_h) else im.zoom;
     }

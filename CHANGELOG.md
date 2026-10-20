@@ -52,6 +52,10 @@ needs a `## <version>` section here, or its build fails.
   saved without asking when auto save is off. A submodule shows as a folder in source control, opens as one, shows
   the commits it is at in the **Changes** tab, and isn't discarded or stashed. Fixed: the Enter that chose **Switch
   Branch…** in the palette no longer checks out the first branch at once.
+- The Zig build's status bar is the Go app's: what Git is doing with a spinner ("Switching to main…", "Pushing…"),
+  tooltips on the branch, the folder and the caret's place, the indentation's menu with checks and **Convert
+  Indentation to Tabs** and **to Spaces**, a menu for the line endings, and for a picture its size, bytes and zoom,
+  for a diff its files, changes and lines, for a terminal its folder and size in cells.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

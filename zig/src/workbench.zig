@@ -117,6 +117,7 @@ pub const Workbench = struct {
     status_menu: ui.Menu = .{},
     review_menu: ui.Menu = .{},
     indent_menu: ui.Menu = .{},
+    eol_menu: ui.Menu = .{},
     bell: bool = false,
     /// What waits for the tabs asked about to close: the project closing,
     /// its window, the app quitting.
@@ -394,7 +395,7 @@ pub const Workbench = struct {
                 }
             } else wb.main(c, chrome);
         }
-        wbeditor.statusBar(wb, c);
+        @import("statusbar.zig").view(wb, c);
         ui.end(c);
         wb.editors.panel_rect = if (wb.panel.open) wb.panel.rect else null;
         wb.editors.endDrag(c);

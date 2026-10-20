@@ -1,7 +1,7 @@
 //! What a project shows of its tabs: the columns side by side, each tab's
 //! body (an editor, a picture, a diff, a commit, a terminal), the
 //! breadcrumbs with the blocks around the caret, the conflict bar, the
-//! minimap, the keys the window takes itself, and the status bar.
+//! minimap, and the keys the window takes itself.
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
@@ -563,49 +563,10 @@ fn welcome(wb: *Workbench, c: *ui.Context) void {
     }
 }
 
-fn statusItem(c: *ui.Context, label: []const u8) bool {
-    const it = ui.div(c).row().h(20).px(4).itemsCenter().rounded(3).hover(c.theme.surface_hover);
-    ui.text(c, label, .{ .size = 12, .color = c.theme.muted });
-    const clicked = it.clicked();
-    it.end();
-    return clicked;
-}
-
-pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
+/// The review comments' count in the status bar, with their menu.
+pub fn reviewStatus(wb: *Workbench, c: *ui.Context) void {
     const t = c.theme;
     const p = wb.shell.palette;
-    const bar = ui.div(c).row().wFull().h(24).px(6).gap(10).itemsCenter().bg(.hex(p.chrome));
-    defer bar.end();
-    if (!wb.shell.store.s.projectTabs) wb.shell.manageButton(c, wb);
-    wb.shell.mascot(c, 16);
-    if (wb.scm.branch) |b| {
-        const br = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
-        icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .color = t.muted });
-        ui.text(c, b, .{ .size = 12, .color = t.muted });
-        if (wb.scm.ab.ahead > 0) ui.text(c, c.print("↑{d}", .{wb.scm.ab.ahead}), .{ .size = 11, .color = t.muted });
-        if (wb.scm.ab.behind > 0) ui.text(c, c.print("↓{d}", .{wb.scm.ab.behind}), .{ .size = 11, .color = t.muted });
-        const bi = br.interaction();
-        br.end();
-        if (ui.buttonMenu(c, &wb.status_menu, bi)) |m| {
-            defer m.end();
-            const items = [_]Cmd{ .git_switch_branch, .git_create_branch, .git_rename_branch, .git_delete_branch, .git_fetch, .git_pull, .git_push, .git_sync };
-            for (items, 0..) |cmd, k| {
-                if (k == 4) m.separator();
-                if (m.item(commands.info(cmd).title, .{})) run_mod.run(wb, c, cmd);
-            }
-        }
-    }
-    // The folder, as the Go app's status bar names it.
-    {
-        const fo = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
-        icons.sym(c, "folder", .{ .size = 11, .color = t.muted });
-        ui.text(c, wb.name(), .{ .size = 12, .color = t.muted });
-        const fi = fo.interaction();
-        fo.end();
-        ui.tooltip(c, fi, wb.root);
-        if (fi.clicked) myzig.shell.showInFolder(wb.root);
-    }
-    if (wb.runner.busy) ui.text(c, "Git…", .{ .size = 11, .color = t.accent });
     if (wb.review.list.items.len > 0) {
         const rv = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
         icons.sym(c, "pencil", .{ .size = 11, .color = .hex(p.modified) });
@@ -628,46 +589,10 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
             if (m.item("Clear", .{})) run_mod.run(wb, c, .clear_review);
         }
     }
-    const doc = wb.editors.currentDoc();
-    if (doc) |d| blame(wb, c, d);
-    ui.spacer(c);
-    if (wb.shell.keymap.chord_len > 0) ui.text(c, c.print("({s}) was pressed. Waiting for the next key…", .{wb.shell.keymap.chordText(c)}), .{ .size = 11, .color = t.accent });
-    const d = doc orelse return;
-    if (d.disk_gone) {
-        const gone = ui.div(c).row().h(20).px(6).gap(5).itemsCenter();
-        icons.sym(c, "trash", .{ .size = 9.5, .color = t.danger });
-        ui.text(c, "Deleted on disk", .{ .size = 12, .color = t.danger });
-        gone.end();
-    }
-    const ta = &d.editor.area;
-    const line = ta.caretLine();
-    const col = ta.sel.caret - ta.doc.lineStart(line);
-    const sel_n = ta.sel.hi() - ta.sel.lo();
-    if (statusItem(c, if (sel_n > 0) c.print("Ln {d}, Col {d} ({d} selected)", .{ line + 1, col + 1, sel_n }) else c.print("Ln {d}, Col {d}", .{ line + 1, col + 1 }))) run_mod.run(wb, c, .go_to_line);
-    const lines = ta.doc.lineCount();
-    _ = statusItem(c, c.print("{d} line{s}", .{ lines, if (lines == 1) "" else "s" }));
-    const unit = d.editor.indent.unit;
-    const ind = ui.div(c).row().h(20).px(4).itemsCenter().rounded(3).hover(t.surface_hover);
-    ui.text(c, if (std.mem.eql(u8, unit, "\t")) "Tab Size: 4" else c.print("Spaces: {d}", .{unit.len}), .{ .size = 12, .color = t.muted });
-    const ii = ind.interaction();
-    ind.end();
-    if (ui.buttonMenu(c, &wb.indent_menu, ii)) |m| {
-        defer m.end();
-        const items = [_]Cmd{ .indent_tabs, .indent_spaces_2, .indent_spaces_4, .indent_spaces_8 };
-        for (items) |cmd| if (m.item(commands.info(cmd).title, .{})) run_mod.run(wb, c, cmd);
-    }
-    if (statusItem(c, if (d.crlf) "CRLF" else "LF")) {
-        d.crlf = !d.crlf;
-        d.saved +%= 1; // the line endings changed: save writes them
-    }
-    _ = statusItem(c, "UTF-8");
-    _ = statusItem(c, icons.languageName(d.name()));
-    if (statusItem(c, if (d.editor.wrap) "Wrap" else "No Wrap")) run_mod.run(wb, c, .toggle_wrap);
-    if (statusItem(c, if (wb.shell.store.s.autoSave) "Auto Save" else "Auto Save Off")) run_mod.run(wb, c, .toggle_auto_save);
 }
 
 /// Who changed the caret's line last, read a moment after the caret stops.
-fn blame(wb: *Workbench, c: *ui.Context, d: *Doc) void {
+pub fn blame(wb: *Workbench, c: *ui.Context, d: *Doc) void {
     if (!wb.shell.store.s.blame or d.path.len == 0) return;
     const top = wb.scm.top orelse return;
     const line = d.editor.area.caretLine();

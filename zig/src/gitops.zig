@@ -107,8 +107,16 @@ pub const Runner = struct {
     io: std.Io,
     window: ?*myzig.Window = null,
     busy: bool = false,
+    /// What runs, for the status bar.
+    now: Kind = .other,
+    now_buf: [96]u8 = undefined,
+    now_len: usize = 0,
     ctx: ?*anyopaque = null,
     on_done: ?*const fn (ctx: *anyopaque, d: Done) void = null,
+
+    pub fn nowSubject(r: *const Runner) []const u8 {
+        return r.now_buf[0..r.now_len];
+    }
 
     /// Runs `git args...` in `top` off the main thread; false while busy.
     pub fn run(r: *Runner, kind: Kind, top: []const u8, args: []const []const u8, subject: []const u8) bool {
@@ -118,6 +126,9 @@ pub const Runner = struct {
         j.* = .{ .runner = r, .gpa = g, .io = r.io, .owner = r.ctx.?, .kind = kind, .top = g.dupe(u8, top) catch return false, .argv = g.alloc([]u8, args.len) catch return false, .subject = g.dupe(u8, subject) catch return false };
         for (args, 0..) |a, i| j.argv[i] = g.dupe(u8, a) catch return false;
         r.busy = true;
+        r.now = kind;
+        r.now_len = @min(subject.len, r.now_buf.len);
+        @memcpy(r.now_buf[0..r.now_len], subject[0..r.now_len]);
         jobs.spawn(Job, j, Job.work, Job.done) catch {
             r.busy = false;
             j.free(g);

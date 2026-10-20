@@ -211,6 +211,45 @@ pub fn trimTrailingWhitespace(ta: *ui.TextArea, gpa: std.mem.Allocator) void {
     ta.collapse(caret);
 }
 
+/// Indents every line with `to` (a tab or spaces) instead of `from`, one
+/// level for each: what is left over stays spaces (the Go app's `reindent`).
+pub fn reindent(ta: *ui.TextArea, gpa: std.mem.Allocator, from: []const u8, to: []const u8) void {
+    const text = ta.text(gpa);
+    defer gpa.free(text);
+    const width: usize = if (std.mem.eql(u8, from, "\t")) 4 else @max(from.len, 1);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var first = true;
+    while (it.next()) |l| {
+        if (!first) out.append(gpa, '\n') catch return;
+        first = false;
+        var cols: usize = 0;
+        var n: usize = 0;
+        while (n < l.len and (l[n] == ' ' or l[n] == '\t')) : (n += 1) cols = if (l[n] == '\t') (cols / 4 + 1) * 4 else cols + 1;
+        if (n == l.len) {
+            out.appendSlice(gpa, l) catch return;
+            continue;
+        }
+        for (0..cols / width) |_| out.appendSlice(gpa, to) catch return;
+        out.appendNTimes(gpa, ' ', cols % width) catch return;
+        out.appendSlice(gpa, l[n..]) catch return;
+    }
+    if (std.mem.eql(u8, out.items, text)) return;
+    const caret = @min(ta.sel.caret, out.items.len);
+    ta.replaceRange(0, ta.len(), out.items, .other);
+    ta.collapse(caret);
+}
+
+test reindent {
+    var ta: ui.TextArea = .init(std.testing.allocator, "a\n    b\n      c\n");
+    defer ta.deinit();
+    reindent(&ta, std.testing.allocator, "    ", "\t");
+    const out = ta.text(std.testing.allocator);
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("a\n\tb\n\t  c\n", out);
+}
+
 test transform {
     const gpa = std.testing.allocator;
     const cases = [_]struct { []const u8, Case, []const u8 }{
