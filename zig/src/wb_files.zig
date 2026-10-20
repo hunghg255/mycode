@@ -508,6 +508,7 @@ pub fn panelRequest(wb: *Workbench, req: panel_mod.Panel.Request) void {
             toLockedColumn(wb, t);
         },
         .set_default => |i| wb.shell.setDefaultProfile(i),
+        .configure => wb.pending.append(wb.gpa, .open_settings) catch {},
         .to_editor => |t| if (std.mem.indexOfScalar(*Term, wb.panel.terms.items, t)) |i| {
             wb.panel.active = i;
             moveTerminal(wb);

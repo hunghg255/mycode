@@ -4,6 +4,7 @@
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
+const Cmd = @import("commands.zig").Cmd;
 const icons = @import("icons.zig");
 const terminal = @import("terminal");
 const Profile = @import("termprofiles.zig").Profile;
@@ -233,7 +234,7 @@ pub const Panel = struct {
     /// Where it was drawn last: tabs of terminals dropped there come in.
     rect: ?ui.Rect = null,
 
-    pub const Request = union(enum) { new: ?usize, to_column: *Term, to_editor: *Term, kill: *Term, set_default: usize };
+    pub const Request = union(enum) { new: ?usize, to_column: *Term, to_editor: *Term, kill: *Term, set_default: usize, configure };
 
     pub fn deinit(p: *Panel) void {
         for (p.terms.items) |t| t.destroy();
@@ -266,7 +267,8 @@ pub const Panel = struct {
         p.terms.items[p.active].focus = true;
     }
 
-    pub fn view(p: *Panel, c: *ui.Context, profiles: []const Profile, default_profile: usize, chrome: ui.Color) void {
+    /// `keys` names a command's key, for the buttons' tooltips ("" for none).
+    pub fn view(p: *Panel, c: *ui.Context, profiles: []const Profile, default_profile: usize, chrome: ui.Color, keys: Keys) void {
         const t = c.theme;
         var i: usize = p.terms.items.len;
         while (i > 0) {
@@ -279,21 +281,31 @@ pub const Panel = struct {
             whole.end();
         }
         {
-            const bar = ui.div(c).row().wFull().h(30).px(8).gap(4).itemsCenter().bg(chrome);
+            const bar = ui.div(c).row().wFull().h(30).pl(14).pr(8).gap(4).itemsCenter().bg(chrome);
             defer bar.end();
-            ui.text(c, "TERMINAL", .{ .size = 11, .weight = .semibold, .color = t.muted });
-            _ = c.leaf(.{ .width = .{ .px = 8 } }, .none, null);
+            // The view's name, underlined in the accent as the one shown.
+            const title = ui.div(c).h(30).center();
+            ui.text(c, "TERMINAL", .{ .size = 11, .weight = .semibold, .color = t.text });
+            _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 28.5 }, .width = .fill, .height = .{ .px = 1.5 }, .background = t.accent }, .none, null);
+            title.end();
+            _ = c.leaf(.{ .width = .{ .px = 10 } }, .none, null);
             var close_at: ?usize = null;
+            // The terminals, as chips, scrolled sideways when they don't fit.
+            const chips = ui.div(c).row().grow().h(30).gap(2).itemsCenter().scrollY();
             for (p.terms.items, 0..) |term, k| {
                 c.keyed(term);
                 const on = k == p.active;
-                const chip = ui.div(c).row().h(22).px(8).gap(6).itemsCenter().rounded(4).bg(if (on) t.surface_hover else .transparent).hover(t.surface_hover);
+                const chip = ui.div(c).row().h(22).pl(8).pr(4).gap(6).itemsCenter().rounded(5).bg(if (on) t.surface_hover else .transparent).hover(t.surface_hover);
                 icons.sym(c, "terminal", .{ .size = 11, .color = if (term.bell) t.accent else t.muted });
+                const name_box = ui.div(c).maxW(180).clip();
                 ui.text(c, c.print("{d}: {s}", .{ k + 1, term.name() }), .{ .size = 12, .color = if (on) t.text else t.muted });
-                const x = ui.div(c).w(14).h(14).center().rounded(3).hover(t.surface);
-                icons.sym(c, "xmark", .{ .size = 8, .color = t.muted });
-                if (x.clicked()) close_at = k;
+                name_box.end();
+                const x = ui.div(c).w(18).h(18).center().rounded(4).hover(t.surface);
+                icons.sym(c, "xmark", .{ .size = 8.5, .color = if (x.hovered()) t.text else if (on) t.muted else t.muted.alpha(0.6) });
+                const xi = x.interaction();
                 x.end();
+                ui.tooltip(c, xi, "Close Terminal");
+                if (xi.clicked) close_at = k;
                 const ci = chip.interaction();
                 chip.end();
                 if (ci.clicked) {
@@ -304,18 +316,25 @@ pub const Panel = struct {
                 if (ui.contextMenu(c, &p.chip_menu, ci)) |m| {
                     defer m.end();
                     p.chip_at = k;
-                    if (m.item("Move to Editor Column", .{})) p.request = .{ .to_column = term };
+                    if (m.item("Move to Locked Right Column", .{})) p.request = .{ .to_column = term };
+                    if (m.item("Move to Editor Area", .{})) p.request = .{ .to_editor = term };
                     if (m.item("Kill Terminal", .{})) close_at = k;
                 }
             }
+            chips.end();
             if (close_at) |k| {
                 p.take(k).destroy();
                 c.changed = true;
             }
-            ui.spacer(c);
-            // As the Go app's: a new terminal, its profiles, to the editor
-            // area, killed, the panel maximized, and closed.
-            if (tipButton(c, "plus", "New Terminal (Ctrl+Shift+`)")) p.request = .{ .new = null };
+            // As the Go app's: the terminals before and after, a new
+            // terminal, its profiles, to the editor area, killed, the panel
+            // maximized, and hidden.
+            if (p.terms.items.len > 1) {
+                if (tipButton(c, "chevron.left", keys.with(c, "Previous Terminal", .prev_terminal))) p.cycle(false);
+                if (tipButton(c, "chevron.right", keys.with(c, "Next Terminal", .next_terminal))) p.cycle(true);
+            }
+            const def_name = if (default_profile < profiles.len) profiles[default_profile].name else "";
+            if (tipButton(c, "plus", c.print("{s} ({s})", .{ keys.with(c, "New Terminal", .new_terminal), def_name }))) p.request = .{ .new = null };
             const more = ui.div(c).w(26).h(24).center().rounded(5).hover(t.surface_hover);
             icons.sym(c, "chevron.down", .{ .size = 11, .color = t.muted });
             const mi = more.interaction();
@@ -323,23 +342,24 @@ pub const Panel = struct {
             ui.tooltip(c, mi, "Launch Profile…");
             if (ui.buttonMenu(c, &p.profile_menu, mi)) |m| {
                 defer m.end();
-                for (profiles, 0..) |pr, k| if (m.item(c.print("New {s}", .{pr.name}), .{})) {
+                for (profiles, 0..) |pr, k| if (m.item(if (k == default_profile) c.print("{s} (Default)", .{pr.name}) else pr.name, .{})) {
                     p.request = .{ .new = k };
                 };
                 m.separator();
-                if (m.submenu("Default Profile")) |sub| {
+                if (m.submenu("Select Default Profile")) |sub| {
                     defer sub.end();
                     for (profiles, 0..) |pr, k| if (sub.item(pr.name, .{ .checked = k == default_profile })) {
                         p.request = .{ .set_default = k };
                     };
                 }
+                if (m.item("Configure Terminal Profiles…", .{})) p.request = .configure;
             }
             if (p.current()) |term| {
                 if (tipButton(c, "arrow.up.right", "Move Terminal to Editor Area")) p.request = .{ .to_editor = term };
                 if (tipButton(c, "trash", "Kill Terminal")) p.request = .{ .kill = term };
             }
-            if (tipButton(c, if (p.maximized) "arrow.down.right.and.arrow.up.left" else "arrow.up.left.and.arrow.down.right", if (p.maximized) "Restore Panel Size" else "Maximize Panel")) p.maximized = !p.maximized;
-            if (tipButton(c, "xmark", "Close Panel")) {
+            if (tipButton(c, if (p.maximized) "arrow.down.right.and.arrow.up.left" else "arrow.up.left.and.arrow.down.right", if (p.maximized) "Restore Panel" else "Maximize Panel")) p.maximized = !p.maximized;
+            if (tipButton(c, "xmark", "Hide Panel")) {
                 p.open = false;
                 p.maximized = false;
             }
@@ -349,6 +369,17 @@ pub const Panel = struct {
             2 => ui.text(c, "  The terminal's libraries could not be downloaded. Set MYZIG_GHOSTTY_VT, or put them next to mycode.exe.", .{ .size = 12, .color = t.danger, .wrap = true }),
             else => if (p.current()) |term| term.view(c) else if (p.err) |e| ui.text(c, c.print("  Could not start a shell: {s}", .{e}), .{ .size = 12, .color = t.danger }),
         }
+    }
+};
+
+/// Names a command's key for a tooltip, as "New Terminal (Ctrl+Shift+`)".
+pub const Keys = struct {
+    ctx: *anyopaque,
+    label: *const fn (ctx: *anyopaque, c: *ui.Context, cmd: Cmd) []const u8,
+
+    pub fn with(k: Keys, c: *ui.Context, text: []const u8, cmd: Cmd) []const u8 {
+        const key = k.label(k.ctx, c, cmd);
+        return if (key.len == 0) text else c.print("{s} ({s})", .{ text, key });
     }
 };
 

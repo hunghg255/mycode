@@ -74,6 +74,11 @@ needs a `## <version>` section here, or its build fails.
   and **Unlock Column** buttons end the strip, and a tab's menu has **Close Others**, **Close All**, **Move to Next
   Column**, **Move to Previous Column** (making the column when there is none), **Show Preview**, **Reveal in File
   Explorer** and **Copy Path**.
+- The Zig build's terminal panel is the Go app's: **TERMINAL** underlined in the accent, the terminals' chips
+  scrolling sideways with **Close Terminal** buttons, **Previous Terminal** and **Next Terminal** while there are
+  several, the default profile named on **New Terminal**'s tooltip and marked **(Default)** in **Launch Profile…**,
+  with **Select Default Profile** and **Configure Terminal Profiles…**, and a chip's menu that moves the terminal to
+  the locked right column or the editor area.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

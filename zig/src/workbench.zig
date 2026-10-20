@@ -523,7 +523,7 @@ pub const Workbench = struct {
         ui.column(c, .{ .width = .fill, .height = .fill });
         defer ui.end(c);
         if (wb.panel.open and wb.panel.maximized) {
-            wb.panel.view(c, wb.shell.profiles, wb.shell.defaultProfile(), chrome);
+            wb.panel.view(c, wb.shell.profiles, wb.shell.defaultProfile(), chrome, .{ .ctx = wb.shell, .label = Shell.keyLabel });
             return;
         }
         if (wb.panel.open) {
@@ -533,7 +533,7 @@ pub const Workbench = struct {
             var sp = ui.split(c, &first, .{ .vertical = true, .min = 80 });
             wbeditor.columnsView(wb, c, chrome);
             sp.second();
-            wb.panel.view(c, wb.shell.profiles, wb.shell.defaultProfile(), chrome);
+            wb.panel.view(c, wb.shell.profiles, wb.shell.defaultProfile(), chrome, .{ .ctx = wb.shell, .label = Shell.keyLabel });
             if (sp.end().changed) wb.panel.height = @max(room - first, 80);
         } else wbeditor.columnsView(wb, c, chrome);
     }
