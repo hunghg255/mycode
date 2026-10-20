@@ -598,6 +598,9 @@ pub fn sendToTerminal(wb: *Workbench, text: []const u8) void {
 
 /// The boxes over the window: quick open, prompts, pickers, questions, toasts.
 pub fn overlays(wb: *Workbench, c: *ui.Context) void {
+    wb.quick.lines = if (wb.editors.currentDoc()) |d| d.editor.area.doc.lineCount() else 0;
+    wb.quick.profiles = wb.shell.profiles;
+    wb.quick.default_profile = wb.shell.defaultProfile();
     if (wb.quick.view(c)) |pick| switch (pick) {
         .file => |rel| {
             const abs = std.fs.path.join(wb.gpa, &.{ wb.root, rel }) catch return;
@@ -607,10 +610,17 @@ pub fn overlays(wb: *Workbench, c: *ui.Context) void {
             c.changed = true;
         },
         .command => |cmd| run_mod.run(wb, c, cmd),
-        .line => |line| if (wb.editors.currentDoc()) |d| {
-            d.editor.goToLine(line);
+        .line => |lc| if (wb.editors.currentDoc()) |d| {
+            d.editor.goToLine(lc.line);
+            if (lc.col > 1) {
+                const ta = &d.editor.area;
+                const l = ta.caretLine();
+                ta.collapse(@min(ta.doc.lineStart(l) + lc.col - 1, ta.lineRange(l)[1]));
+            }
             c.changed = true;
         },
+        .new_terminal => |k| newTerminal(wb, k),
+        .default_terminal => |k| wb.shell.setDefaultProfile(k),
         .symbol => |line| if (wb.editors.currentDoc()) |d| {
             d.editor.goToLine(line + 1);
             c.changed = true;

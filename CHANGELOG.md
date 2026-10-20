@@ -79,6 +79,11 @@ needs a `## <version>` section here, or its build fails.
   several, the default profile named on **New Terminal**'s tooltip and marked **(Default)** in **Launch Profile…**,
   with **Select Default Profile** and **Configure Terminal Profiles…**, and a chip's menu that moves the terminal to
   the locked right column or the editor area.
+- The Zig build's quick open is the Go app's: under the title bar, its icon and placeholder by what it searches,
+  the characters matched in the accent, commands as **Group: Title** with their keys as keycaps, a terminal of each
+  profile and the default one (**Terminal: New Terminal: Git Bash**), symbols nested as in the file until a name
+  is typed, `:42:7` for a line and a column, what to type when nothing matches, and a footer with its keys and
+  prefixes.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.
