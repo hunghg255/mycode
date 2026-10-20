@@ -249,7 +249,7 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
             if (ch.list.top_entry) |te| if (before != te and te < ch.list.entries.items.len) wb.scm.follow(ch.list.entries.items[te].path);
         },
         .commit => |cv| {
-            cv.header(c, chrome);
+            if (cv.header(c, chrome)) _ = wb.toasts.show(c.print("Copied {s}", .{cv.hash[0..@min(7, cv.hash.len)]}));
             diffList(wb, c, &cv.list, chrome);
         },
         .terminal => |t| t.view(c),

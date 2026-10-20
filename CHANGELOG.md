@@ -104,6 +104,9 @@ needs a `## <version>` section here, or its build fails.
   Files**, **Toggle Word Wrap**, the **Layout** menu (side by side when wide, side by side, inline) and **Open
   File**; icon buttons on each file; **Stage**, **Unstage** and **Discard** buttons on each change; and **No
   Changes** when the work tree matches the last commit.
+- The Zig build's commit tabs open on the Go app's card: the subject, the author's initials and name, when it was
+  committed, its short hash (a click copies it), its branches and tags, how many parents and files, and the rest
+  of its message folded past six lines with **Show More**.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

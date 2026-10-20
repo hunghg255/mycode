@@ -415,7 +415,7 @@ pub const DiffList = struct {
                 added += e.added;
                 deleted += e.deleted;
             }
-            ui.text(c, c.print("{d} files  +{d} −{d}", .{ dl.entries.items.len, added, deleted }), .{ .size = 11, .color = t.muted });
+            ui.text(c, c.print("{d} file{s}  +{d} −{d}", .{ dl.entries.items.len, if (dl.entries.items.len == 1) "" else "s", added, deleted }), .{ .size = 11, .color = t.muted });
             // As the Go app's: icons with their tooltips.
             if (iconTool(c, "arrow.up", "Previous Change ([)", false)) if (dl.next(.hunk, false)) |i| dl.moveTo(i, false);
             if (iconTool(c, "arrow.down", "Next Change (])", false)) if (dl.next(.hunk, true)) |i| dl.moveTo(i, false);
