@@ -5,6 +5,9 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- A long line pinned above the editor as you scroll no longer pushes the minimap, the split button and the end of the
+  status bar out of the window: it is cut at the editor's edge.
+
 - Scrolling into a block no longer makes the editor and its minimap jump back and forth: the block's line sticking
   above the editor gave the editor another id, which lost its scroll, which took the line away again, every other
   frame. Bars appearing above the editor no longer lose its scroll either, and the wheel over the minimap glides as

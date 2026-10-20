@@ -361,7 +361,9 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
     _ = chrome;
     const t = c.theme;
     const s = wb.shell.store.s;
-    const box = ui.div(c).column().grow().hFull();
+    // As wide as the room beside the minimap, never its content's width:
+    // a long line pinned above made it push the minimap out of the window.
+    const box = ui.div(c).column().w(0).grow().hFull();
     var tops: []const ui.TextLineTop = &.{};
     var row_h: f32 = 0;
     defer {
@@ -381,9 +383,9 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
     // In a box of their own, there or not: the editor after them keeps its
     // id (and so its scroll) as they come and go. Its scroll changing them,
     // they flipped it back and forth every frame.
-    const sticky = ui.div(c).column().wFull();
+    const sticky = ui.div(c).column().wFull().clip();
     for (pinned) |sy| if (sy.line < d.first_line) {
-        const b = ui.div(c).row().wFull().h(20).px(48).itemsCenter().bg(.hex(wb.shell.palette.chrome)).hover(t.surface_hover);
+        const b = ui.div(c).row().wFull().h(20).px(48).itemsCenter().clip().bg(.hex(wb.shell.palette.chrome)).hover(t.surface_hover);
         const line = d.editor.area.doc.line(c.alloc(), sy.line);
         ui.text(c, std.mem.trimEnd(u8, line, "\r"), .{ .size = s.fontSize * 0.95, .mono = true, .color = t.muted });
         if (b.clicked()) d.editor.goToLine(sy.line + 1);
