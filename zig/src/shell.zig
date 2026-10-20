@@ -780,31 +780,28 @@ pub const Shell = struct {
     /// MyCode's logo, or the theme's mascot in its place.
     pub fn logo(sh: *Shell, c: *ui.Context, size: f32) void {
         const th = sh.store.s.theme;
-        if (std.mem.eql(u8, th, "claude") or std.mem.eql(u8, th, "qoder")) return sh.mascot(c, size);
+        if (std.mem.eql(u8, th, "claude") or std.mem.eql(u8, th, "qoder")) return sh.mascot(c, @max(1, @round(size / 13)), .hex(sh.palette.editor));
         _ = ui.image(c, .{ .key = "mycode-logo", .bytes = @embedFile("icon_png"), .max_width = size, .max_height = size, .radius = size * 0.22, .label = "MyCode" });
     }
 
-    /// Clawd under the Claude theme, Qoder's duck under Qoder's: blinking
-    /// now and then, hopping while Git runs.
-    pub fn mascot(sh: *Shell, c: *ui.Context, size: f32) void {
-        const th = sh.store.s.theme;
-        const claude = std.mem.eql(u8, th, "claude");
-        const qoder = std.mem.eql(u8, th, "qoder");
-        if (!claude and !qoder) return;
-        const busy = if (sh.active()) |wb| wb.runner.busy or wb.search.running else false;
-        const phase = @mod(c.time, 4.0);
-        const blink = phase > 3.85;
-        const hop: f32 = if (busy) @abs(@sin(@as(f32, @floatCast(c.time)) * 9)) * size * 0.15 else 0;
-        if (busy) c.animationFrame() else c.frameIn(@floatCast(if (phase < 3.85) 3.85 - phase else 4.0 - phase));
-        const body: ui.Color = if (claude) .hex(0xd97757) else .hex(0xf5c542);
-        const box = ui.div(c).w(size).h(size);
-        defer box.end();
-        _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = size * 0.15 - hop }, .width = .{ .px = size }, .height = .{ .px = size * 0.7 }, .radius = if (claude) size * 0.12 else size * 0.35, .background = body }, .none, null);
-        const eye_h: f32 = if (blink) size * 0.04 else size * 0.16;
-        for ([_]f32{ 0.28, 0.62 }) |x| {
-            _ = c.leaf(.{ .absolute = true, .offset = .{ .x = size * x, .y = size * 0.35 - hop + (size * 0.16 - eye_h) / 2 }, .width = .{ .px = size * 0.1 }, .height = .{ .px = eye_h }, .radius = size * 0.05, .background = .hex(0x1f1e1d) }, .none, null);
-        }
-        if (qoder) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = size * 0.78, .y = size * 0.45 - hop }, .width = .{ .px = size * 0.26 }, .height = .{ .px = size * 0.14 }, .radius = size * 0.07, .background = .hex(0xf08a24) }, .none, null);
+    /// The theme's character in cells of a width (1 in the status bar, 4 on
+    /// the welcome page), on `bg`: blinking now and then, hopping while Git
+    /// or a search runs, still while the window hasn't the keyboard
+    /// (`mascot.zig`).
+    pub fn mascot(sh: *Shell, c: *ui.Context, cell: f32, bg: ui.Color) void {
+        const mascot_mod = @import("mascot.zig");
+        const k = mascot_mod.of(sh.store.s.theme) orelse return;
+        const wb = sh.active();
+        const git_busy = if (wb) |w| w.runner.busy else false;
+        const searching = if (wb) |w| w.search.running else false;
+        const tip = if (git_busy)
+            c.print("{s} · {s}", .{ mascot_mod.name(k), @import("statusbar.zig").busyText(c, wb.?.runner.now, wb.?.runner.nowSubject()) })
+        else if (searching)
+            c.print("{s} · Searching…", .{mascot_mod.name(k)})
+        else
+            mascot_mod.name(k);
+        const still = !sh.has_focus or ui.motion.reduced(c);
+        mascot_mod.view(c, k, cell, c.theme.accent, bg, git_busy or searching, still, tip);
     }
 
     /// Ctrl+R: the recent folders, found by name; Enter opens one here,

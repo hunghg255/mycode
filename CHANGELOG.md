@@ -124,6 +124,10 @@ needs a `## <version>` section here, or its build fails.
   dozen at most.
 - The Zig build's review comments show on cards, as the Go app's: a stripe of their color, "Comment on lines 3–5",
   an **Outdated** pill when the lines have changed since, and **Edit Comment** and **Delete Comment** buttons.
+- The Zig build draws the themes' characters as the Go app does, Clawd in Claude's quarter blocks and Qoder's duck
+  from its icon's shapes, on the welcome page and in the status bar: blinking now and then, bobbing once in a
+  while, hopping while Git or a search runs (its tooltip says what), and still while the window hasn't the
+  keyboard. A first start of the Zig build takes the settings and keyboard shortcuts Mayoi had.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

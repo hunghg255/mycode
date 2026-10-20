@@ -67,9 +67,30 @@ pub const Store = struct {
             .state_path = try std.fs.path.join(gpa, &.{ dir, "state-zig.json" }),
             .arena = .init(gpa),
         };
+        migrate(gpa, io, dir, st.settings_path);
         _ = st.reload();
         if (!fs.exists(io, st.keys_path)) fs.write(io, st.keys_path, "// Keyboard shortcuts, in VS Code's format.\n[\n]\n") catch {};
         return st;
+    }
+
+    /// A first start under the name MyCode keeps what Mayoi had, as the Go
+    /// app's `migrateData`: its settings and keyboard shortcuts are copied
+    /// from the folder beside this one, while this one has no settings.
+    fn migrate(gpa: std.mem.Allocator, io: std.Io, dir: []const u8, settings_path: []const u8) void {
+        if (fs.exists(io, settings_path)) return;
+        const parent = std.fs.path.dirname(dir) orelse return;
+        const old = std.fs.path.join(gpa, &.{ parent, "Mayoi" }) catch return;
+        defer gpa.free(old);
+        if (std.ascii.eqlIgnoreCase(old, dir) or !fs.isDirectory(io, old)) return;
+        for ([_][]const u8{ "settings.json", "keybindings.json" }) |name| {
+            const from = std.fs.path.join(gpa, &.{ old, name }) catch continue;
+            defer gpa.free(from);
+            const data = fs.read(gpa, io, from) catch continue;
+            defer gpa.free(data);
+            const to = std.fs.path.join(gpa, &.{ dir, name }) catch continue;
+            defer gpa.free(to);
+            fs.write(io, to, data) catch {};
+        }
     }
 
     pub fn deinit(st: *Store) void {

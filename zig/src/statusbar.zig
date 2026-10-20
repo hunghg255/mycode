@@ -119,7 +119,11 @@ pub fn view(wb: *Workbench, c: *ui.Context) void {
     const bar = ui.div(c).row().wFull().h(24).px(6).gap(4).itemsCenter().bg(.hex(p.chrome));
     defer bar.end();
     if (!wb.shell.store.s.projectTabs) wb.shell.manageButton(c, wb);
-    wb.shell.mascot(c, 16);
+    if (@import("mascot.zig").of(wb.shell.store.s.theme) != null) {
+        const m = ui.div(c).px(6).h(24).center();
+        wb.shell.mascot(c, 1, .hex(p.chrome));
+        m.end();
+    }
     if (wb.scm.branch) |b| {
         const br = ui.div(c).row().h(20).px(5).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
         icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .color = t.muted });
