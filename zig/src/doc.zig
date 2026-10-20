@@ -11,6 +11,8 @@ const conflicts = @import("conflicts.zig");
 
 pub const Mark = enum(u8) { none, added, changed, removed };
 
+pub const MdImage = struct { bytes: []u8, key: []u8, mtime: i96 };
+
 pub const Note = struct { line: usize, text: []const u8, color: ui.Color };
 
 pub const Colors = struct {
@@ -45,6 +47,9 @@ pub const Doc = struct {
     /// Markdown or SVG shown rendered rather than as text.
     rendered: bool = false,
     md: ?ui.Markdown = null,
+    /// The local pictures its Markdown shows, read once: by path, the
+    /// bytes and when they were read (`viewer.zig`).
+    md_images: std.StringHashMapUnmanaged(MdImage) = .empty,
     /// The file as HEAD has it, read once; null outside Git or for a new file.
     base: ?[]u8 = null,
     base_read: bool = false,
@@ -99,6 +104,13 @@ pub const Doc = struct {
     pub fn destroy(d: *Doc) void {
         d.editor.deinit();
         if (d.md) |*m| m.deinit();
+        var mi = d.md_images.iterator();
+        while (mi.next()) |e| {
+            d.gpa.free(e.key_ptr.*);
+            d.gpa.free(e.value_ptr.bytes);
+            d.gpa.free(e.value_ptr.key);
+        }
+        d.md_images.deinit(d.gpa);
         if (d.base) |b| d.gpa.free(b);
         d.marks.deinit(d.gpa);
         d.gpa.free(d.blocks);

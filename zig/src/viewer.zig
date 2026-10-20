@@ -249,8 +249,37 @@ pub fn markdown(c: *ui.Context, d: *Doc) ?[]const u8 {
     defer sc.end();
     const col = ui.div(c).column().wFull().maxW(860);
     defer col.end();
-    const res = ui.markdown(c, body, .{ .state = &d.md.? });
+    const res = ui.markdown(c, body, .{ .state = &d.md.?, .images = .{ .ctx = d, .read = mdImage } });
     return res.link;
+}
+
+/// A picture a Markdown file shows: a local file only (relative to the
+/// file, absolute, or `file://`), never fetched from the network; read
+/// again when it changes.
+fn mdImage(ctx: *anyopaque, c: *ui.Context, url: []const u8) ?ui.MarkdownImage {
+    const d: *Doc = @ptrCast(@alignCast(ctx));
+    var dest = url;
+    if (std.mem.startsWith(u8, dest, "file://")) dest = dest[7..] else if (std.mem.indexOf(u8, dest, "://") != null or std.mem.startsWith(u8, dest, "data:")) return null;
+    if (std.mem.indexOfAny(u8, dest, "?#")) |q| dest = dest[0..q];
+    if (dest.len == 0 or d.path.len == 0) return null;
+    const dir = std.fs.path.dirname(d.path) orelse return null;
+    const path = if (std.fs.path.isAbsolute(dest)) dest else std.fs.path.resolve(c.alloc(), &.{ dir, dest }) catch return null;
+    const mtime = fs.mtime(d.io, path);
+    if (mtime == 0) return null;
+    if (d.md_images.get(path)) |e| if (e.mtime == mtime) return .{ .key = e.key, .bytes = e.bytes, .svg = isSvg(path) };
+    const bytes = fs.read(d.gpa, d.io, path) catch return null;
+    const key = std.fmt.allocPrint(d.gpa, "md:{s}#{d}", .{ path, mtime }) catch {
+        d.gpa.free(bytes);
+        return null;
+    };
+    if (d.md_images.fetchRemove(path)) |old| {
+        d.gpa.free(old.key);
+        d.gpa.free(old.value.bytes);
+        d.gpa.free(old.value.key);
+    }
+    const owned = d.gpa.dupe(u8, path) catch return null;
+    d.md_images.put(d.gpa, owned, .{ .bytes = bytes, .key = key, .mtime = mtime }) catch return null;
+    return .{ .key = key, .bytes = bytes, .svg = isSvg(path) };
 }
 
 /// An SVG file shown as a picture, updated as it is typed.
