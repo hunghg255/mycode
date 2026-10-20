@@ -253,7 +253,11 @@ pub const Workbench = struct {
         for (wb.editors.cols.items) |col| {
             var tabs: std.ArrayList(state_mod.TabState) = .empty;
             for (col.items.items) |it| switch (it.body) {
-                .file => |d| if (d.path.len > 0) tabs.append(a, .{ .path = d.path, .caret = d.editor.area.sel.caret, .preview = it.preview, .wrap = d.own_wrap, .rendered = d.rendered }) catch {},
+                .file => |d| if (d.path.len > 0) {
+                    // A file in two columns: each tab its own selection.
+                    const sel = if (d.refs > 1) (it.sel orelse d.editor.area.sel) else d.editor.area.sel;
+                    tabs.append(a, .{ .path = d.path, .caret = sel.caret, .anchor = sel.anchor, .scroll = d.scroll_y, .preview = it.preview, .wrap = d.own_wrap, .rendered = d.rendered }) catch {};
+                },
                 .image => |im| tabs.append(a, .{ .path = im.path, .kind = "file", .preview = it.preview }) catch {},
                 .changes => tabs.append(a, .{ .kind = "changes" }) catch {},
                 .commit => |cv| tabs.append(a, .{ .kind = "commit", .path = cv.hash }) catch {},
@@ -296,7 +300,8 @@ pub const Workbench = struct {
                         .file => |d| {
                             const at = @min(ts.caret, d.editor.area.len());
                             d.editor.goToLine(d.editor.area.doc.lineOf(at) + 1);
-                            d.editor.area.collapse(at);
+                            d.editor.area.select(@min(ts.anchor orelse at, d.editor.area.len()), at);
+                            if (ts.scroll > 0) d.restore_scroll = ts.scroll;
                             d.own_wrap = ts.wrap;
                             d.rendered = ts.rendered;
                         },

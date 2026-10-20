@@ -169,14 +169,16 @@ pub const Main = struct {
         for (roots) |r| _ = try sh.addProject(r);
         if (sh.projects.items.len == 0) return error.NoFolder;
         try m.shells.append(m.gpa, sh);
-        const first = m.shells.items.len == 1;
+        // Each window keeps its place and size, by the order it opens in.
+        const state_keys = [_][]const u8{ "main", "window-2", "window-3", "window-4", "window-5", "window-6", "window-7", "window-8" };
+        const state_key = state_keys[@min(m.shells.items.len, state_keys.len) - 1];
         const w = try m.app.newWindow(.{
             .title = "MyCode",
             .width = 1280,
             .height = 820,
             .min_width = 640,
             .min_height = 400,
-            .state = if (first) myzig.windowState("main") else null,
+            .state = myzig.windowState(state_key),
             .on_event = .of(sh, Shell.onWindowEvent),
             .on_drop = .of(sh, Shell.onDrop),
             .on_close = .{ .ctx = sh, .func = struct {

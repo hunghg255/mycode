@@ -33,6 +33,10 @@ pub const Shell = struct {
     title_dirty: bool = true,
     rail_menu: ui.Menu = .{},
     rail_at: usize = 0,
+    /// A square of the rail pressed, dragged to another place.
+    rail_drag: ?struct { from: usize, start: ui.Point, moving: bool = false } = null,
+    /// The squares as last laid out, for where a drag lets go.
+    rail_rects: [32]ui.Rect = undefined,
     manage_menu: ui.Menu = .{},
     recent: ui.OverlayState = .{},
     recent_query: ui.TextBuffer = .{},
@@ -450,7 +454,12 @@ pub const Shell = struct {
             if (wb.editors.anyDirty() or wb.bell) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 26, .y = 2 }, .width = .{ .px = 7 }, .height = .{ .px = 7 }, .radius = 4, .background = if (wb.bell) t.accent else t.text }, .none, null);
             const si = sq.interaction();
             sq.end();
+            const wi = wrap.interaction();
             wrap.end();
+            if (i < sh.rail_rects.len) if (wi.rect) |r| {
+                sh.rail_rects[i] = r;
+            };
+            if (si.pressed and c.input.pressed and sh.rail_drag == null) sh.rail_drag = .{ .from = i, .start = c.input.mouse };
             ui.tooltip(c, si, if (i < 9) c.print("{s}\n{s}\n{s}", .{ wb.name(), wb.root, c.print("Ctrl+Alt+{d}", .{i + 1}) }) else c.print("{s}\n{s}", .{ wb.name(), wb.root }));
             if (si.clicked) go = i;
             if (ui.contextMenu(c, &sh.rail_menu, si)) |m| {
@@ -459,8 +468,8 @@ pub const Shell = struct {
                 if (m.item("Reveal in File Explorer", .{})) myzig.shell.showInFolder(wb.root);
                 if (m.item("Copy Path", .{})) _ = myzig.clipboard.writeText(wb.root);
                 if (m.item("Project Icons", .{ .checked = sh.store.s.projectIcons })) sh.store.setBool("projectIcons", !sh.store.s.projectIcons);
-                if (i > 0) if (m.item("Move Up", .{})) std.mem.swap(*Workbench, &sh.projects.items[i], &sh.projects.items[i - 1]);
-                if (i + 1 < sh.projects.items.len) if (m.item("Move Down", .{})) std.mem.swap(*Workbench, &sh.projects.items[i], &sh.projects.items[i + 1]);
+                if (i > 0) if (m.item("Move Up", .{})) sh.moveProject(i, i - 1);
+                if (i + 1 < sh.projects.items.len) if (m.item("Move Down", .{})) sh.moveProject(i, i + 1);
                 m.separator();
                 if (m.item("Close Project", .{})) wb.queue(.close_project);
                 if (m.item("Close Other Projects", .{})) {
@@ -468,13 +477,56 @@ pub const Shell = struct {
                 }
             }
         }
-        if (go) |i| sh.show(i);
+        if (go) |i| if (sh.rail_drag == null or !sh.rail_drag.?.moving) sh.show(i);
+        sh.railDrag(c);
         const plus = ui.div(c).w(34).h(34).center().rounded(8).hover(t.surface_hover);
         ui.icon(c, "plus", .{ .size = 14, .color = t.muted });
         if (plus.clicked()) sh.queue(.open_folder);
         plus.end();
         ui.spacer(c);
         if (sh.active()) |wb| sh.manageButton(c, wb);
+    }
+
+    /// Moves project `from` to place `to` of the rail, the one shown staying shown.
+    fn moveProject(sh: *Shell, from: usize, to: usize) void {
+        if (from == to or from >= sh.projects.items.len) return;
+        const shown = sh.active();
+        const wb = sh.projects.orderedRemove(from);
+        sh.projects.insert(sh.gpa, @min(to, sh.projects.items.len), wb) catch {
+            sh.projects.append(sh.gpa, wb) catch {};
+        };
+        if (shown) |s| if (std.mem.indexOfScalar(*Workbench, sh.projects.items, s)) |k| {
+            sh.current = k;
+        };
+        sh.main.saveState();
+    }
+
+    /// A square dragged along the rail: a bar shows where it goes, and it
+    /// goes there as it is let go.
+    fn railDrag(sh: *Shell, c: *ui.Context) void {
+        const dg = &(sh.rail_drag orelse return);
+        const n = @min(sh.projects.items.len, sh.rail_rects.len);
+        const y = c.input.mouse.y;
+        // The place before the first square whose middle is below the pointer.
+        var to: usize = n;
+        for (0..n) |k| if (y < sh.rail_rects[k].y + sh.rail_rects[k].h / 2) {
+            to = k;
+            break;
+        };
+        if (c.input.down) {
+            if (!dg.moving and @abs(y - dg.start.y) > 6) dg.moving = true;
+            if (dg.moving and n > 0) {
+                c.wants_moves = true;
+                const ry = if (to < n) sh.rail_rects[to].y else sh.rail_rects[n - 1].y + sh.rail_rects[n - 1].h;
+                _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 6, .y = ry - sh.rail_rects[0].y + 6 }, .width = .{ .px = 36 }, .height = .{ .px = 2 }, .background = c.theme.accent }, .none, null);
+            }
+            return;
+        }
+        defer sh.rail_drag = null;
+        if (!dg.moving) return;
+        // Past its own place, the places after it move up by one.
+        sh.moveProject(dg.from, if (to > dg.from) to - 1 else to);
+        c.changed = true;
     }
 
     /// The gear: the Manage menu, as VS Code's.

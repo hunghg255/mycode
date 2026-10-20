@@ -9,6 +9,10 @@ pub const TabState = struct {
     path: []const u8 = "",
     kind: []const u8 = "file",
     caret: usize = 0,
+    /// Where the selection began (the caret's own place for none), and
+    /// how far the text was scrolled.
+    anchor: ?usize = null,
+    scroll: f32 = 0,
     preview: bool = false,
     wrap: ?bool = null,
     /// Markdown and SVG shown as a preview rather than text.
