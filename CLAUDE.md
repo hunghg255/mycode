@@ -50,11 +50,28 @@ big picture:
 
 ### myzig in practice
 
-- Views are immediate mode, rebuilt every frame, and **laid out after the view returns**: `ui.text` keeps its slice
-  until then, so never pass a stack buffer (use `c.print`), and never free in the middle of a frame what the frame
-  may still show. Closing a project is deferred (`Shell.closeProjectNow`, dropped as the next frame starts).
-- Ids are positional: a box added conditionally before an interactive one changes its id and loses its clicks; use
-  `c.keyed`. Take `c.peekId` right before the text field it names.
+- Views are immediate mode, rebuilt every frame, and **laid out and painted after the view returns**: `ui.text`
+  (and canvases, rich text, tooltips) keep the slices they are given until then; nothing is copied. So:
+  - Never pass a stack buffer; format with `c.print`, or copy with `c.alloc()`.
+  - **Never free or replace, in the middle of a frame, memory a text of that frame points at**: a path, a name, a
+    Git change, a symbol, a document. Whatever the frame drew before (the title bar, the tab strip, another
+    column, a breadcrumb) is laid out afterwards and reads it freed: a crash in `layout_cache` (`same`, `hold`)
+    or a text measure is this. Release builds' allocator never reuses memory, so it faults at once there.
+  - Defer instead: free as the next frame starts (`Shell.closeProjectNow`, `Editors.discard`), keep the old value
+    one update longer (`Doc.old_path`, `Doc.old_syms`), or apply what a thread read between frames (`jobs.spawn`'s
+    `done` runs on the main thread, never inside a frame).
+  - State shared by every column or project must not be rebuilt by each in turn within a frame: give each its own
+    (each `Doc` keeps its symbols).
+- Ids are positional: a box added conditionally before an interactive one (or a scroll box) changes its id, which
+  loses its clicks, its focus and its scroll. Wrap what comes and goes in a box that is always there (the sticky
+  lines' box), or use `c.keyed`. Take `c.peekId` right before the text field it names. An editor whose id flips
+  every frame scrolls back and forth.
+- A box takes its content's width unless told otherwise: give a box beside fixed ones `.w(0).grow()` and `.clip()`
+  long text, or a long line pushes its neighbours (the minimap, the status bar) out of the window.
+- `c.scroll_max` is kept only for boxes that follow their end; a box's scroll length is `c.scroll_limit` (the last
+  layout's).
+- Crash logs: Windows builds keep their debug information, so with `mycode.pdb` beside `MyCode.exe` (copy it from
+  `.myzig/build/windows-x86_64/x86_64/bin/`), `%APPDATA%\MyCode\crash-zig.log` has the stack.
 - Text is selectable unless its box has `.control()`.
 - Keep files short and changes to myzig itself out of this repository; myzig is its own project.
 
