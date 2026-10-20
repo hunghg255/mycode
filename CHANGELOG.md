@@ -45,6 +45,13 @@ needs a `## <version>` section here, or its build fails.
 - The Zig build colors some sixty more languages (C#, Kotlin, Swift, Haskell, OCaml, Elixir, Clojure, Nix, Julia,
   Terraform, Perl, LaTeX and others), HTML, XML, Vue and Svelte with their scripts and styles, Markdown and diffs,
   and names them in the status bar. **Toggle Line Comment** does nothing in a language without line comments.
+- In the Zig build, switching to a branch checked out in another worktree offers to open that worktree, here or in
+  a new window, or to prune it and switch when its folder is gone. Switching branches, checking out a commit, a
+  merge, rebase, cherry-pick or revert, continuing one, a hard reset, stashing and applying a stash wait for the
+  files changed in the editor to be saved ("Save the changes of a.txt before switching branches."), and nothing is
+  saved without asking when auto save is off. A submodule shows as a folder in source control, opens as one, shows
+  the commits it is at in the **Changes** tab, and isn't discarded or stashed. Fixed: the Enter that chose **Switch
+  Branch…** in the palette no longer checks out the first branch at once.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

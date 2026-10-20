@@ -109,6 +109,9 @@ pub const Change = struct {
     /// The index's state (X) and the work tree's (Y), as porcelain v1 writes them.
     x: u8,
     y: u8,
+    /// A submodule (its folder), not a file: it opens as a folder, and
+    /// discarding and stashing leave it, as `git restore` does.
+    sub: bool = false,
 
     pub fn status(ch: Change) Status {
         if (ch.x == 'U' or ch.y == 'U' or (ch.x == 'A' and ch.y == 'A') or (ch.x == 'D' and ch.y == 'D')) return .conflict;
@@ -142,7 +145,14 @@ pub fn status(gpa: std.mem.Allocator, io: Io, dir: []const u8, buf: *[]u8) ![]Ch
         return error.GitFailed;
     }
     buf.* = r.stdout;
-    return parseStatus(gpa, r.stdout);
+    const changes = try parseStatus(gpa, r.stdout);
+    // Git lists files, but a submodule as its folder.
+    for (changes) |*ch| if (ch.x != '?' and ch.status() != .deleted) {
+        const p = std.fs.path.join(gpa, &.{ dir, ch.path }) catch continue;
+        defer gpa.free(p);
+        ch.sub = @import("fs.zig").isDirectory(io, p);
+    };
+    return changes;
 }
 
 pub fn parseStatus(gpa: std.mem.Allocator, out: []const u8) ![]Change {

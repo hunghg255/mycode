@@ -641,7 +641,7 @@ pub const Scm = struct {
         const on = s.isChosen(ch.path);
         const row = ui.div(c).row().wFull().h(22).pl(indent).pr(6).gap(6).itemsCenter().bg(if (on) t.accent.alpha(0.15) else .transparent).hover(t.surface_hover);
         const name = std.fs.path.basenamePosix(ch.path);
-        icons.file(c, name);
+        if (ch.sub) icons.sym(c, "folder", .{ .size = 13, .color = t.accent }) else icons.file(c, name);
         const st = ch.status();
         ui.text(c, name, .{ .size = 13, .color = colors.of(st) });
         if (!s.tree) if (std.fs.path.dirnamePosix(ch.path)) |d| ui.text(c, d, .{ .size = 11, .color = t.muted });
@@ -653,7 +653,7 @@ pub const Scm = struct {
                     act = .{ .unstage = s.targets(c, ch.path) };
                 },
                 else => {
-                    if (g != .merge and rowButton(c, "arrow.clockwise")) act = .{ .discard = s.targets(c, ch.path) };
+                    if (g != .merge and !ch.sub and rowButton(c, "arrow.clockwise")) act = .{ .discard = s.targets(c, ch.path) };
                     if (rowButton(c, "plus")) act = .{ .stage = s.targets(c, ch.path) };
                 },
             }
@@ -691,17 +691,19 @@ pub const Scm = struct {
         if (ui.contextMenu(c, &s.row_menu, ri)) |m| {
             defer m.end();
             if (m.item("Open Changes", .{})) act = .{ .open = .{ .path = ch.path, .staged = g == .staged } };
-            if (m.item("Open File", .{})) act = .{ .open_file = ch.path };
+            if (m.item(if (ch.sub) "Open Folder" else "Open File", .{})) act = .{ .open_file = ch.path };
             m.separator();
             if (g == .staged) {
                 if (m.item("Unstage Changes", .{})) act = .{ .unstage = s.targets(c, ch.path) };
             } else {
                 if (m.item("Stage Changes", .{})) act = .{ .stage = s.targets(c, ch.path) };
-                if (g != .merge) if (m.item("Discard Changes", .{})) {
+                if (g != .merge and !ch.sub) if (m.item("Discard Changes", .{})) {
                     act = .{ .discard = s.targets(c, ch.path) };
                 };
             }
-            if (m.item("Stash Changes…", .{})) act = .{ .stash_files = s.targets(c, ch.path) };
+            if (!ch.sub) if (m.item("Stash Changes…", .{})) {
+                act = .{ .stash_files = s.targets(c, ch.path) };
+            };
         }
         return act;
     }

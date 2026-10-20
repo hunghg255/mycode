@@ -45,6 +45,8 @@ pub const Picker = struct {
     /// Builds left in which the field takes the keyboard: the dialog
     /// clears the focus as it opens.
     focus: u8 = 0,
+    /// Shown this frame: an Enter now chose what opened it.
+    fresh: bool = false,
     menu: ui.Menu = .{},
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io) Picker {
@@ -62,6 +64,7 @@ pub const Picker = struct {
         p.query.clear();
         p.selected = 0;
         p.focus = 6;
+        p.fresh = true;
         switch (mode) {
             .switch_branch, .delete_branch => p.branches = list(p.arena.allocator(), p.io, top) catch &.{},
             else => p.stashes = stashList(p.arena.allocator(), p.io, top) catch &.{},
@@ -151,7 +154,9 @@ pub const Picker = struct {
         }
         rows.end();
         if (n == 0) ui.text(c, "Nothing matches.", .{ .size = 12, .color = t.muted });
-        if (field.submitted and n > 0) pick = p.pickAt(p.selected, creating, q);
+        // The Enter that chose the command opening the picker isn't its own.
+        if (field.submitted and n > 0 and !p.fresh) pick = p.pickAt(p.selected, creating, q);
+        p.fresh = false;
         if (pick != null) p.dialog.close();
         return pick;
     }

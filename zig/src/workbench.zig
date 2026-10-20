@@ -52,6 +52,8 @@ pub const Confirm = enum {
     close_project,
     discard_hunk_closed,
     close_unsaved,
+    open_worktree,
+    prune_worktree,
     abort_op,
     merge,
     rebase,
@@ -162,7 +164,8 @@ pub const Workbench = struct {
     pub fn destroy(wb: *Workbench) void {
         @import("jobs.zig").gone(wb);
         if (wb.watcher) |w| w.stop();
-        wb.editors.saveAll();
+        // What wasn't asked about stays unsaved unless auto save saves it.
+        if (wb.editors.auto_save) wb.editors.saveAll();
         wb.explorer.deinit();
         wb.editors.deinit();
         wb.quick.deinit();

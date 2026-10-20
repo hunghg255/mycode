@@ -50,19 +50,23 @@ pub const Changes = struct {
         var buf2: [std.fs.max_path_bytes + 8]u8 = undefined;
         for (changes) |c| if (c.status() == .conflict) {
             ch.list.add(c.path, null, 'C', "Merge Changes", false, std.fmt.bufPrint(&buf2, "HEAD:{s}", .{c.path}) catch continue, "@") catch {};
+            ch.list.markSub(c.sub);
         };
         for (changes) |c| if (c.staged()) {
             const old_path = c.orig orelse c.path;
             const old = std.fmt.bufPrint(&buf, "HEAD:{s}", .{old_path}) catch continue;
             const new = std.fmt.bufPrint(&buf2, ":{s}", .{c.path}) catch continue;
             ch.list.add(c.path, c.orig, c.x, "Staged Changes", true, if (c.x == 'A') "" else old, if (c.x == 'D') "" else new) catch {};
+            ch.list.markSub(c.sub);
         };
         for (changes) |c| if (c.unstaged()) {
             const old = std.fmt.bufPrint(&buf, ":{s}", .{c.path}) catch continue;
             ch.list.add(c.path, null, c.y, "Changes", false, old, if (c.y == 'D') "" else "@") catch {};
+            ch.list.markSub(c.sub);
         };
         for (changes) |c| if (c.status() == .untracked) {
             ch.list.add(c.path, null, 'U', "Untracked", false, "", "@") catch {};
+            ch.list.markSub(c.sub);
         };
         for (ch.list.entries.items, 0..) |*e, i| {
             var kb: [std.fs.max_path_bytes + 40]u8 = undefined;

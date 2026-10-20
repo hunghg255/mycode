@@ -424,6 +424,7 @@ test {
     _ = @import("search.zig");
     _ = @import("doc.zig");
     _ = @import("viewer.zig");
+    _ = @import("worktree.zig");
     _ = @import("updates.zig");
     _ = commands;
     _ = menubar;

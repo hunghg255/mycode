@@ -18,6 +18,12 @@ const Changes = @import("changes.zig").Changes;
 const CommitView = @import("commitview.zig").CommitView;
 const joinNative = @import("explorer.zig").joinNative;
 const Doc = @import("doc.zig").Doc;
+const worktree = @import("worktree.zig");
+
+/// Checks out a local branch (the worktree's question's answer).
+pub fn switchTo(wb: *Workbench, branch: []const u8) void {
+    slow(wb, .checkout, &.{ "checkout", branch }, branch);
+}
 
 fn top(wb: *Workbench) ?[]const u8 {
     return wb.scm.top;
@@ -39,8 +45,29 @@ pub fn quick(wb: *Workbench, args: []const []const u8) bool {
 
 fn slow(wb: *Workbench, kind: gitops.Kind, args: []const []const u8, subject: []const u8) void {
     const t = top(wb) orelse return;
-    // Files save first: Git reads them from the disk.
-    wb.editors.saveAll();
+    // Git reads the files from the disk: auto save saves them first, and
+    // what rewrites the work tree waits for the rest to be saved.
+    if (wb.editors.auto_save) wb.editors.saveAll();
+    const hard = for (args) |a| {
+        if (std.mem.eql(u8, a, "--hard")) break true;
+    } else false;
+    const detach = for (args) |a| {
+        if (std.mem.eql(u8, a, "--detach")) break true;
+    } else false;
+    const doing: ?[]const u8 = switch (kind) {
+        .checkout => if (detach) "checking out a commit" else "switching branches",
+        .create_branch => "switching branches",
+        .merge => "a merge",
+        .rebase => "a rebase",
+        .revert => "a revert",
+        .cherry_pick => "a cherry-pick",
+        .continue_op => "continuing",
+        .stash => "stashing",
+        .stash_apply, .stash_pop => "applying a stash",
+        .reset => if (hard) "a hard reset" else null,
+        else => null,
+    };
+    if (doing) |d| if (!worktree.docsSaved(wb, d)) return;
     if (!wb.runner.run(kind, t, args, subject)) _ = wb.toasts.show("A Git command is running");
 }
 
@@ -229,6 +256,8 @@ pub fn onGitDone(ctx: *anyopaque, d: gitops.Done) void {
             _ = wb.toasts.add(.{ .title = "Stopped for conflicts", .description = "Resolve them, stage the files, then Continue.", .kind = .@"error" });
             return;
         }
+        // A branch checked out in another worktree opens it.
+        if (d.kind == .checkout and worktree.askIfHeld(wb, d.subject)) return;
         if (d.kind == .stash_pop or d.kind == .stash_apply) {
             wb.toastError("The stash clashes with your changes", "The files are left in conflict to resolve; the stash entry is kept.");
             return;
@@ -246,7 +275,7 @@ pub fn onGitDone(ctx: *anyopaque, d: gitops.Done) void {
         .stash => wb.toast_pop_stash = wb.toasts.showAction("Changes stashed", "Pop"),
         .stash_pop => _ = wb.toasts.show("Stash popped"),
         .stash_apply => _ = wb.toasts.show("Stash applied"),
-        .checkout, .create_branch => _ = wb.toasts.show(wb.gpa.dupe(u8, "Switched branch") catch "Switched"),
+        .checkout, .create_branch => _ = wb.toasts.show("Switched branch"),
         .continue_op => _ = wb.toasts.show("Continued"),
         .merge => _ = wb.toasts.add(.{ .title = "Merged", .kind = .success }),
         .rebase => _ = wb.toasts.add(.{ .title = "Rebased", .kind = .success }),
@@ -277,7 +306,8 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
             const t = top(wb) orelse return;
             const abs = joinNative(g, t, rel) catch return;
             defer g.free(abs);
-            if (fs.exists(wb.io, abs)) _ = wb.editors.openFile(abs, false) catch {};
+            // A submodule opens as a folder.
+            if (fs.isDirectory(wb.io, abs)) wb.shell.openFolder(abs, false) else if (fs.exists(wb.io, abs)) _ = wb.editors.openFile(abs, false) catch {};
         },
         .commit => |cm| commit(wb, cm.all, cm.amend, cm.push),
         .undo_commit => undoCommit(wb),
@@ -297,7 +327,9 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         .tag_at => |h| wb.prompt.ask(.new_tag, "A new tag's name", "", h),
         .stage => |ps| _ = quick(wb, withPaths(c, &.{ "add", "--" }, ps)),
         .unstage => |ps| _ = quick(wb, withPaths(c, &.{ "reset", "-q", "HEAD", "--" }, ps)),
-        .discard => |ps| {
+        .discard => |all| {
+            const ps = files(wb, c, all);
+            if (ps.len == 0) return;
             const list = std.mem.join(c.alloc(), "\n", ps) catch return;
             const what = if (ps.len == 1) ps[0] else c.print("{d} files", .{ps.len});
             wb.ask(.discard_file, list, "Discard changes?", c.print("{s}\nThis can't be undone; an untracked file goes to the Recycle Bin.", .{what}), &.{ "Cancel", "Discard" });
@@ -317,7 +349,9 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         .continue_op => run(wb, c, .git_continue),
         .abort_op => run(wb, c, .git_abort),
         .graph => |ge| graphEvent(wb, c, ge),
-        .stash_files => |ps| {
+        .stash_files => |all| {
+            const ps = files(wb, c, all);
+            if (ps.len == 0) return;
             const list = std.mem.join(c.alloc(), "\n", ps) catch return;
             wb.prompt.ask(.stash_files, if (ps.len == 1) "Stash this file: a message (or none)" else "Stash these files: a message (or none)", "", list);
         },
@@ -325,6 +359,18 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
 }
 
 /// `git args... paths...`, in the frame's memory.
+/// The paths that aren't submodules, which discarding and stashing leave.
+fn files(wb: *Workbench, c: *ui.Context, paths: []const []const u8) []const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    for (paths) |p| {
+        const sub = for (wb.scm.changes) |ch| {
+            if (std.mem.eql(u8, ch.path, p)) break ch.sub;
+        } else false;
+        if (!sub) out.append(c.alloc(), p) catch {};
+    }
+    return out.items;
+}
+
 fn withPaths(c: *ui.Context, args: []const []const u8, paths: []const []const u8) []const []const u8 {
     const out = c.alloc().alloc([]const u8, args.len + paths.len) catch return args;
     @memcpy(out[0..args.len], args);
@@ -401,6 +447,7 @@ pub fn confirmed(wb: *Workbench, c: *ui.Context, button: usize) void {
         .close_project => if (button == 1) wb.shell.closeProjectNow(wb),
         .discard_hunk_closed => {},
         .close_unsaved => @import("wb_files.zig").unsavedAnswer(wb, button),
+        .open_worktree, .prune_worktree => worktree.answer(wb, kind == .prune_worktree, arg, button),
         .merge => if (button == 1) slow(wb, .merge, &.{ "merge", "--no-edit", arg }, arg),
         .rebase => if (button == 1) slow(wb, .rebase, &.{ "rebase", arg }, arg),
         .revert => if (button == 1) {
@@ -413,7 +460,6 @@ pub fn confirmed(wb: *Workbench, c: *ui.Context, button: usize) void {
                 2 => "--mixed",
                 else => "--hard",
             };
-            wb.editors.saveAll();
             slow(wb, .reset, &.{ "reset", mode, arg }, arg);
         },
         .abort_op => if (button == 1 and wb.scm.op != .none) {
@@ -611,16 +657,37 @@ pub fn readSide(ctx: *anyopaque, gpa: std.mem.Allocator, spec: []const u8, path:
     if (std.mem.eql(u8, spec, "@")) {
         const abs = joinNative(gpa, t, path) catch return gpa.dupe(u8, "") catch &.{};
         defer gpa.free(abs);
+        if (fs.isDirectory(wb.io, abs)) return subproject(wb, gpa, abs, null);
         if (wb.editors.findDoc(abs)) |d| return d.editor.area.text(gpa);
         const data = fs.read(gpa, wb.io, abs) catch return gpa.dupe(u8, "") catch &.{};
         if (std.mem.indexOf(u8, data, "\r\n") == null) return data;
         defer gpa.free(data);
         return std.mem.replaceOwned(u8, gpa, data, "\r\n", "\n") catch gpa.dupe(u8, "") catch &.{};
     }
+    // A submodule's side is the commit it is at, as `git diff` shows it.
+    if (std.fs.path.join(gpa, &.{ t, path })) |abs| {
+        defer gpa.free(abs);
+        if (fs.isDirectory(wb.io, abs)) return subproject(wb, gpa, t, spec);
+    } else |_| {}
     const out = hunks.show(gpa, wb.io, t, spec);
     if (std.mem.indexOf(u8, out, "\r\n") == null) return out;
     defer gpa.free(out);
     return std.mem.replaceOwned(u8, gpa, out, "\r\n", "\n") catch gpa.dupe(u8, "") catch &.{};
+}
+
+/// "Subproject commit <hash>": of the blob `spec` names in `dir`'s
+/// repository, or else of the submodule checked out at `dir`, "-dirty"
+/// when its files have changes.
+fn subproject(wb: *Workbench, gpa: std.mem.Allocator, dir: []const u8, spec: ?[]const u8) []u8 {
+    const hash = git.line(gpa, wb.io, dir, &.{ "rev-parse", "-q", "--verify", spec orelse "HEAD" }) orelse
+        return gpa.dupe(u8, "") catch &.{};
+    defer gpa.free(hash);
+    var dirty = false;
+    if (spec == null) if (git.run(gpa, wb.io, dir, &.{ "status", "--porcelain" })) |r| {
+        defer r.deinit(gpa);
+        dirty = r.ok and std.mem.trim(u8, r.stdout, " \r\n").len > 0;
+    } else |_| {};
+    return std.fmt.allocPrint(gpa, "Subproject commit {s}{s}\n", .{ hash, if (dirty) "-dirty" else "" }) catch gpa.dupe(u8, "") catch &.{};
 }
 
 pub fn reader(wb: *Workbench) difflist.Reader {
@@ -644,6 +711,7 @@ pub fn diffEvent(wb: *Workbench, c: *ui.Context, dl: *difflist.DiffList, ev: dif
             const t = top(wb) orelse return;
             const abs = joinNative(g, t, o.path) catch return;
             defer g.free(abs);
+            if (fs.isDirectory(wb.io, abs)) return wb.shell.openFolder(abs, false);
             const it = wb.editors.openFile(abs, false) catch return;
             switch (it.body) {
                 .file => |d| d.editor.goToLine(o.line),

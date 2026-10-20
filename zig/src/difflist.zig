@@ -34,6 +34,9 @@ pub const Entry = struct {
     deleted: usize = 0,
     loaded: bool = false,
     folded: bool = false,
+    /// A submodule: its sides are the commits it is at; it opens as a
+    /// folder and isn't discarded.
+    sub: bool = false,
 };
 
 pub const Event = union(enum) {
@@ -128,6 +131,11 @@ pub const DiffList = struct {
         gpa.free(e.old_text);
         gpa.free(e.new_text);
         gpa.free(e.syms);
+    }
+
+    /// Marks the entry added last as a submodule, or not.
+    pub fn markSub(dl: *DiffList, sub: bool) void {
+        if (dl.entries.items.len > 0) dl.entries.items[dl.entries.items.len - 1].sub = sub;
     }
 
     pub fn add(dl: *DiffList, path: []const u8, orig: ?[]const u8, badge: u8, group: []const u8, staged: bool, old_spec: []const u8, new_spec: []const u8) !void {
@@ -554,7 +562,7 @@ pub const DiffList = struct {
         const e = &dl.entries.items[ei];
         const row = ui.div(c).row().wFull().h(row_h).px(8).gap(6).itemsCenter().bg(chrome).hover(t.surface_hover);
         icons.sym(c, if (e.folded) "chevron.right" else "chevron.down", .{ .size = 9, .color = t.muted });
-        icons.file(c, std.fs.path.basename(e.path));
+        if (e.sub) icons.sym(c, "folder", .{ .size = 12, .color = t.accent }) else icons.file(c, std.fs.path.basename(e.path));
         if (std.fs.path.dirnamePosix(e.path)) |d| ui.text(c, c.print("{s}/", .{d}), .{ .size = 12, .color = t.muted });
         ui.text(c, std.fs.path.basenamePosix(e.path), .{ .size = 12, .weight = .semibold });
         const badge = ui.div(c).px(5).h(16).itemsCenter().rounded(3).bg(t.accent.alpha(0.16));
@@ -572,7 +580,7 @@ pub const DiffList = struct {
         ui.spacer(c);
         var acted = false;
         if (row.hovered() or ei == dl.selected_entry) {
-            if (tool(c, "Open File")) {
+            if (tool(c, if (e.sub) "Open Folder" else "Open File")) {
                 ev = .{ .open = .{ .path = e.path, .line = 1 } };
                 acted = true;
             }
@@ -583,7 +591,7 @@ pub const DiffList = struct {
                         acted = true;
                     }
                 } else {
-                    if (e.badge != 'C' and tool(c, "Discard")) {
+                    if (e.badge != 'C' and !e.sub and tool(c, "Discard")) {
                         ev = .{ .discard_file = ei };
                         acted = true;
                     }
