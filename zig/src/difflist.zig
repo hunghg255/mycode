@@ -85,6 +85,7 @@ pub const DiffList = struct {
     layout: Layout = .auto,
     /// Set when the Layout button chose another, for the app to keep.
     layout_chosen: bool = false,
+    layout_menu: ui.Menu = .{},
     /// The editor's font: OpenType features and weight.
     features: []const u8 = "",
     weight: u16 = 0,
@@ -388,8 +389,14 @@ pub const DiffList = struct {
         if (bi.rect) |rc| dl.width = rc.w;
         const focused = bi.focused;
         if (dl.entries.items.len == 0) {
-            ui.column(c, .{ .width = .fill, .grow = 1, .align_items = .center, .justify = .center });
-            ui.text(c, "No changes", .{ .size = 13, .color = t.muted });
+            // As source control says it: the work tree is clean.
+            ui.column(c, .{ .width = .fill, .grow = 1, .align_items = .center, .justify = .center, .gap = 6 });
+            const ring = ui.div(c).w(52).h(52).roundedFull().center().bg(t.success.alpha(0.13));
+            icons.sym(c, "checkmark", .{ .size = 19, .color = t.success });
+            ring.end();
+            _ = c.leaf(.{ .height = .{ .px = 2 } }, .none, null);
+            ui.text(c, "No Changes", .{ .size = 14, .weight = .semibold, .color = t.text });
+            ui.text(c, if (dl.editable) "The working tree matches the last commit." else "The commit changes no files.", .{ .size = 12.5, .color = t.muted });
             ui.end(c);
             return ev;
         }
@@ -409,33 +416,36 @@ pub const DiffList = struct {
                 deleted += e.deleted;
             }
             ui.text(c, c.print("{d} files  +{d} −{d}", .{ dl.entries.items.len, added, deleted }), .{ .size = 11, .color = t.muted });
-            if (tool(c, "↑")) if (dl.next(.hunk, false)) |i| dl.moveTo(i, false);
-            if (tool(c, "↓")) if (dl.next(.hunk, true)) |i| dl.moveTo(i, false);
-            const label = switch (dl.layout) {
-                .auto => "Layout: Auto",
-                .split => "Layout: Side by Side",
-                .inline_ => "Layout: Inline",
-            };
-            if (tool(c, label)) {
-                dl.layout = switch (dl.layout) {
-                    .auto => .split,
-                    .split => .inline_,
-                    .inline_ => .auto,
-                };
-                dl.layout_chosen = true;
-            }
-            const wrapping = dl.wrap orelse dl.wrap_setting;
-            if (tool(c, if (wrapping) "Wrap ✓" else "Wrap")) dl.wrap = !wrapping;
-            if (tool(c, if (dl.full) "Full Files ✓" else "Full Files")) {
+            // As the Go app's: icons with their tooltips.
+            if (iconTool(c, "arrow.up", "Previous Change ([)", false)) if (dl.next(.hunk, false)) |i| dl.moveTo(i, false);
+            if (iconTool(c, "arrow.down", "Next Change (])", false)) if (dl.next(.hunk, true)) |i| dl.moveTo(i, false);
+            if (iconTool(c, "unfold", "Show Full Files", dl.full)) {
                 dl.full = !dl.full;
                 if (!dl.full) for (dl.entries.items) |*e| if (e.dv) |*d| d.collapseAll();
             }
-            if (tool(c, "Fold All")) for (dl.entries.items) |*e| {
-                e.folded = true;
-            };
-            if (tool(c, "Unfold All")) for (dl.entries.items) |*e| {
-                e.folded = false;
-            };
+            const wrapping = dl.wrap orelse dl.wrap_setting;
+            if (iconTool(c, "wrap", "Toggle Word Wrap (Alt+Z)", wrapping)) dl.wrap = !wrapping;
+            const lb = ui.div(c).h(26).px(6).center().rounded(4).hover(t.surface_hover);
+            icons.sym(c, if (dl.layout == .inline_) "rows" else "columns", .{ .size = 10.5, .color = t.muted });
+            const li = lb.interaction();
+            lb.end();
+            ui.tooltip(c, li, "Layout");
+            if (ui.buttonMenu(c, &dl.layout_menu, li)) |m| {
+                defer m.end();
+                const layouts = [_]struct { Layout, []const u8 }{ .{ .auto, "Side by Side When Wide" }, .{ .split, "Side by Side" }, .{ .inline_, "Inline" } };
+                for (layouts) |l| if (m.item(l[1], .{ .checked = dl.layout == l[0] })) {
+                    dl.layout = l[0];
+                    dl.layout_chosen = true;
+                };
+                m.separator();
+                if (m.item("Fold All Files", .{})) for (dl.entries.items) |*e| {
+                    e.folded = true;
+                };
+                if (m.item("Unfold All Files", .{})) for (dl.entries.items) |*e| {
+                    e.folded = false;
+                };
+            }
+            if (iconTool(c, if (cur.sub) "folder" else "doc.text", if (cur.sub) "Open Folder (E)" else "Open File (E)", false)) ev = .{ .open = .{ .path = cur.path, .line = 1 } };
             if (dl.reviewing and ui.button(c, "Send Review", .{ .variant = .primary, .size = 11 }).clicked) ev = .send_review;
         }
         // Where to scroll: an entry to show, a row to keep in view.
@@ -580,22 +590,22 @@ pub const DiffList = struct {
         ui.spacer(c);
         var acted = false;
         if (row.hovered() or ei == dl.selected_entry) {
-            if (tool(c, if (e.sub) "Open Folder" else "Open File")) {
+            if (iconTool(c, if (e.sub) "folder" else "doc.text", if (e.sub) "Open Folder" else "Open File", false)) {
                 ev = .{ .open = .{ .path = e.path, .line = 1 } };
                 acted = true;
             }
             if (dl.editable) {
                 if (e.staged) {
-                    if (tool(c, "Unstage")) {
+                    if (iconTool(c, "minus", "Unstage Changes", false)) {
                         ev = .{ .unstage_file = ei };
                         acted = true;
                     }
                 } else {
-                    if (e.badge != 'C' and !e.sub and tool(c, "Discard")) {
+                    if (e.badge != 'C' and !e.sub and iconTool(c, "arrow.uturn.backward", "Discard Changes…", false)) {
                         ev = .{ .discard_file = ei };
                         acted = true;
                     }
-                    if (tool(c, "Stage")) {
+                    if (iconTool(c, "plus", "Stage Changes", false)) {
                         ev = .{ .stage_file = ei };
                         acted = true;
                     }
@@ -626,10 +636,10 @@ pub const DiffList = struct {
         ui.spacer(c);
         if (dl.editable and (row.hovered() or dl.hunkAt(dl.sel) != null and dl.hunkAt(dl.sel).?.entry == ei and dl.hunkAt(dl.sel).?.hunk == k)) {
             if (e.staged) {
-                if (tool(c, "Unstage")) ev = .{ .unstage_hunk = .{ .entry = ei, .hunk = k } };
+                if (hunkTool(c, "minus", "Unstage")) ev = .{ .unstage_hunk = .{ .entry = ei, .hunk = k } };
             } else if (e.badge != 'U' and e.badge != 'C') {
-                if (tool(c, "Discard")) ev = .{ .discard_hunk = .{ .entry = ei, .hunk = k } };
-                if (tool(c, "Stage")) ev = .{ .stage_hunk = .{ .entry = ei, .hunk = k } };
+                if (hunkTool(c, "plus", "Stage")) ev = .{ .stage_hunk = .{ .entry = ei, .hunk = k } };
+                if (hunkTool(c, "arrow.uturn.backward", "Discard")) ev = .{ .discard_hunk = .{ .entry = ei, .hunk = k } };
             }
         }
         row.end();
@@ -683,6 +693,31 @@ pub const DiffList = struct {
         return .none;
     }
 };
+
+/// A button of a change: its icon and name, on a ground of its own, its
+/// tooltip "Stage this change".
+fn hunkTool(c: *ui.Context, icon: []const u8, label: []const u8) bool {
+    const t = c.theme;
+    const b = ui.div(c).row().h(20).px(7).gap(4).itemsCenter().rounded(4).bg(t.background).border(t.border).hover(t.surface_hover);
+    const hot = b.hovered();
+    icons.sym(c, icon, .{ .size = 9, .color = if (hot) t.text else t.muted });
+    ui.text(c, label, .{ .size = 11.5, .color = if (hot) t.text else t.muted });
+    const bi = b.interaction();
+    b.end();
+    ui.tooltip(c, bi, c.print("{s} this change", .{label}));
+    return bi.clicked;
+}
+
+/// A button of the diff's bar: its icon, its tooltip, pressed while `on`.
+fn iconTool(c: *ui.Context, icon: []const u8, tip: []const u8, on: bool) bool {
+    const t = c.theme;
+    const b = ui.div(c).h(26).px(6).center().rounded(4).bg(if (on) t.accent.alpha(0.18) else .transparent).hover(t.surface_hover);
+    icons.sym(c, icon, .{ .size = 10.5, .color = if (on) t.text else t.muted });
+    const bi = b.interaction();
+    b.end();
+    ui.tooltip(c, bi, tip);
+    return bi.clicked;
+}
 
 fn tool(c: *ui.Context, label: []const u8) bool {
     return ui.button(c, label, .{ .variant = .ghost, .size = 11 }).clicked;

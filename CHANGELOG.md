@@ -100,6 +100,10 @@ needs a `## <version>` section here, or its build fails.
   x from main", and every action on a stash in its menu.
 - Fixed in the Zig build: **Commit All** commits untracked files too (it left them, and failed in a new
   repository), and a branch without commits yet shows its name rather than **No Branch**.
+- The Zig build's diffs have the Go app's bar: icons with tooltips for the previous and next change, **Show Full
+  Files**, **Toggle Word Wrap**, the **Layout** menu (side by side when wide, side by side, inline) and **Open
+  File**; icon buttons on each file; **Stage**, **Unstage** and **Discard** buttons on each change; and **No
+  Changes** when the work tree matches the last commit.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.
