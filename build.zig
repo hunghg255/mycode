@@ -13,7 +13,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        .strip = strip,
+        // Windows keeps its debug information: it is in a .pdb beside the
+        // build, the .exe only names it, and a crash then logs its stack
+        // (crash-zig.log) where that file is.
+        .strip = if (target.result.os.tag == .windows) false else strip,
         .imports = &.{
             .{ .name = "myzig", .module = myzig },
             .{ .name = "terminal", .module = terminal },
