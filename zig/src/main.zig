@@ -418,4 +418,6 @@ test {
     _ = commands;
     _ = menubar;
     _ = @import("panel.zig");
+    _ = @import("minimap.zig");
+    _ = @import("tabdrag.zig");
 }

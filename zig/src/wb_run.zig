@@ -137,6 +137,10 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
         },
         .toggle_preview => if (doc) |d| if (viewer.isMarkdown(d.path) or viewer.isSvg(d.path)) {
             d.rendered = !d.rendered;
+            // A file in two columns: this tab's alone.
+            if (ed.current()) |it| if (it.rendered != null) {
+                it.rendered = d.rendered;
+            };
         },
         .split_right => if (ed.currentLoc()) |l| ed.splitRight(l),
         .toggle_column_lock => ed.focusCol().locked = !ed.focusCol().locked,

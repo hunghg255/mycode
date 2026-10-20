@@ -58,6 +58,12 @@ pub const Doc = struct {
     refs: u32 = 1,
     /// The change whose HEAD lines show in a box (a gutter mark clicked).
     peek: ?usize = null,
+    /// How far the editor is scrolled, as of the last frame, and a scroll
+    /// to give it in the next (a tab opened again, a session restored).
+    scroll_y: f32 = 0,
+    restore_scroll: ?f32 = null,
+    /// Its minimap's drags.
+    mini: @import("minimap.zig").State = .{},
     /// The lines in view in the last frame.
     first_line: usize = 0,
     last_line: usize = 0,
@@ -289,7 +295,7 @@ fn lineMarks(ctx: *anyopaque, c: *ui.Context, line: usize, start: usize, str: []
     var out: std.ArrayList(ui.TextMark) = .empty;
     const a = c.alloc();
     // Conflict blocks: the current side and the incoming one tinted.
-    for (d.blocks) |b| if (line >= b.start and line <= b.end and str.len > 0) {
+    for (d.blocks) |b| if (line >= b.start and line <= b.end) {
         const col: ?ui.Color = if (line == b.start or line == b.end or line == b.sep or (b.base != null and line == b.base.?))
             colors.word
         else if (line < (b.base orelse b.sep))
@@ -298,7 +304,7 @@ fn lineMarks(ctx: *anyopaque, c: *ui.Context, line: usize, start: usize, str: []
             colors.incoming.alpha(0.16)
         else
             colors.word;
-        if (col) |cc| out.append(a, .{ .start = 0, .end = @intCast(str.len), .color = cc }) catch {};
+        if (col) |cc| out.append(a, .{ .start = 0, .end = ui.TextMark.whole, .color = cc }) catch {};
     };
     // Other occurrences of the word at the caret.
     const ta = &d.editor.area;

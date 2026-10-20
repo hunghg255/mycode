@@ -209,12 +209,17 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
     switch (it.body) {
         .file => |d| {
             // A file in two columns: each tab its own selection.
-            if (d.refs > 1) if (it.sel) |s| {
-                d.editor.area.sel = s;
-            };
+            // and its own preview or source (Markdown, SVG).
+            if (d.refs > 1) {
+                if (it.sel) |s| d.editor.area.sel = s;
+                if (it.rendered) |r| d.rendered = r;
+            }
             fileBody(wb, c, d, chrome);
             it.area_id = d.editor.area.id;
-            if (d.refs > 1) it.sel = d.editor.area.sel;
+            if (d.refs > 1) {
+                it.sel = d.editor.area.sel;
+                it.rendered = d.rendered;
+            }
         },
         .image => |im| im.view(c),
         .changes => |ch| {
@@ -297,7 +302,6 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
             d.rendered = !d.rendered;
         };
     }
-    if (d.blocks.len > 0) conflictBar(wb, c, d);
     if (d.rendered and viewer.isMarkdown(d.path)) {
         if (viewer.markdown(c, d)) |url| {
             if (std.mem.startsWith(u8, url, "http")) {
@@ -316,12 +320,18 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
     d.editor.background = .hex(sh.palette.editor);
     d.editor.syntax.colors = themes.syntax(sh.palette);
     d.editor.guides = c.theme.text.alpha(if (sh.palette.dark) 0.08 else 0.1);
+    d.editor.whitespace = c.theme.muted.alpha(0.6);
     notes(wb, c, d, rel);
     {
         const row = ui.div(c).row().wFull().grow().itemsStretch();
         defer row.end();
         stickyAndEditor(wb, c, d, chrome);
-        if (s.minimap and c.size.w > 700) minimap(wb, c, d);
+        // The minimap, while the text keeps its room beside it.
+        const mm = @import("minimap.zig");
+        var text_w: f32 = if (d.editor.area.scroll_id != 0) (c.rects.get(d.editor.area.scroll_id) orelse ui.Rect{ .w = 1e4 }).w else 1e4;
+        if (!d.mini.shown) text_w -= s.minimapWidth;
+        d.mini.shown = s.minimap and text_w >= mm.room;
+        if (d.mini.shown) if (mm.view(c, d, s.minimapWidth, sh.palette)) |kept| sh.store.setNumber("minimapWidth", kept);
     }
     if (wb.review.list.items.len > 0) reviewStrip(wb, c, d, rel);
 }
@@ -331,7 +341,18 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
     const t = c.theme;
     const s = wb.shell.store.s;
     const box = ui.div(c).column().grow().hFull();
-    defer box.end();
+    var tops: []const ui.TextLineTop = &.{};
+    var row_h: f32 = 0;
+    defer {
+        // The overview ruler over the editor's right edge, and the buttons
+        // of each conflict on its first line, as last laid out.
+        if (box.interaction().rect) |br| if (c.rects.get(d.editor.area.scroll_id)) |er| {
+            const at: ui.Rect = .{ .x = er.x - br.x, .y = er.y - br.y, .w = er.w, .h = er.h };
+            @import("ruler.zig").view(c, d, at, wb.shell.palette);
+            conflictButtons(wb, c, d, at, tops, row_h);
+        };
+        box.end();
+    }
     // Sticky scroll: the lines opening the blocks around the first line in view.
     var buf: [4]symbols.Symbol = undefined;
     const pinned = symbols.around(&buf, wb.syms, d.first_line);
@@ -342,9 +363,16 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
         if (b.clicked()) d.editor.goToLine(sy.line + 1);
         b.end();
     };
+    if (d.restore_scroll) |y| if (d.editor.area.scroll_id != 0) {
+        c.scroll.put(c.gpa, d.editor.area.scroll_id, y) catch {};
+        d.restore_scroll = null;
+    };
     const r = ui.codeEditor(c, &d.editor, .{ .size = s.fontSize, .leading = s.lineHeight, .weight = weightOf(s.fontWeight), .weight_value = @intFromFloat(s.fontWeight), .features = s.fontFeatures });
+    d.scroll_y = c.scroll.get(d.editor.area.scroll_id) orelse 0;
     d.first_line = r.first_line;
     d.last_line = r.last_line;
+    tops = r.lines;
+    row_h = r.row_h;
     // A mark clicked in the gutter shows the change as HEAD had it.
     if (d.editor.area.gutter_press) |l| {
         d.editor.area.gutter_press = null;
@@ -377,78 +405,33 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
 
 /// The whole file, small, in rows of its lines' lengths, with the lines
 /// changed since HEAD along its left edge and the view as a slider.
-fn minimap(wb: *Workbench, c: *ui.Context, d: *Doc) void {
+/// Accept Current, Accept Incoming and Accept Both on the first line of
+/// each conflict in view, at the editor's right (`at`, within the box
+/// over it), as conflicts.go has them.
+fn conflictButtons(wb: *Workbench, c: *ui.Context, d: *Doc, at: ui.Rect, tops: []const ui.TextLineTop, row_h: f32) void {
+    if (d.blocks.len == 0 or row_h <= 0) return;
     const t = c.theme;
-    const p = wb.shell.palette;
-    const w = wb.shell.store.s.minimapWidth;
-    const box = ui.div(c).w(w).hFull().clip().bg(.hex(p.editor));
-    defer box.end();
-    const n = d.editor.area.doc.lineCount();
-    if (n == 0) return;
-    const rows: usize = @min(n, 600);
-    const row_h: f32 = 2;
-    const per = @as(f32, @floatFromInt(n)) / @as(f32, @floatFromInt(rows));
-    // Long files' minimaps scroll with the editor.
-    const total_h = @as(f32, @floatFromInt(rows)) * row_h;
-    const view_h = @max(c.size.h - 120, 100);
-    const frac = if (n > 1) @as(f32, @floatFromInt(d.first_line)) / @as(f32, @floatFromInt(n)) else 0;
-    const shift = if (total_h > view_h) frac * (total_h - view_h) else 0;
-    var i: usize = 0;
-    while (i < rows) : (i += 1) {
-        const line = @as(usize, @intFromFloat(@as(f32, @floatFromInt(i)) * per));
-        const y = @as(f32, @floatFromInt(i)) * row_h - shift;
-        if (y < -row_h or y > view_h + 40) continue;
-        const r = d.editor.area.lineRange(@min(line, n - 1));
-        const len = @min(r[1] - r[0], 120);
-        if (len > 1) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 6, .y = y }, .width = .{ .px = @as(f32, @floatFromInt(len)) * (w - 10) / 120 }, .height = .{ .px = row_h - 0.5 }, .background = t.muted.alpha(0.35) }, .none, null);
-        if (line < d.marks.items.len and d.marks.items[line] != .none) {
-            const col: ui.Color = switch (d.marks.items[line]) {
-                .added => .hex(p.added),
-                .changed => .hex(p.changed),
-                else => .hex(p.removed),
-            };
-            _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 1, .y = y }, .width = .{ .px = 3 }, .height = .{ .px = row_h }, .background = col }, .none, null);
+    for (d.blocks) |b| for (tops) |top| if (top.line == b.start) {
+        if (top.y < 0 or top.y > at.h - row_h) break;
+        c.keyed(b.start);
+        const bar = ui.div(c).row().absolute().offset(at.x, at.y + top.y).w(@max(at.w - 28, 0)).h(row_h).gap(2).itemsCenter();
+        defer bar.end();
+        ui.spacer(c);
+        const sides = [_]struct { []const u8, @import("conflicts.zig").Side }{ .{ "Accept Current", .current }, .{ "Accept Incoming", .incoming }, .{ "Accept Both", .both } };
+        for (sides) |sd| {
+            const btn = ui.div(c).row().h(@max(row_h - 2, 16)).px(7).itemsCenter().rounded(4).bg(.hex(wb.shell.palette.chrome)).border(t.border).hover(t.surface_hover);
+            ui.text(c, sd[0], .{ .size = 11.5, .color = if (btn.hovered()) t.text else t.muted });
+            const clicked = btn.clicked();
+            btn.end();
+            if (clicked) {
+                // By its first line: the caret goes there, then it is resolved.
+                d.editor.area.collapse(d.editor.area.doc.lineStart(b.start));
+                wbgit.acceptConflict(wb, sd[1], false);
+                c.changed = true;
+            }
         }
-    }
-    // The slider: the lines in view.
-    const vy = @as(f32, @floatFromInt(d.first_line)) / per * row_h - shift;
-    const vh = @max(@as(f32, @floatFromInt(d.last_line -| d.first_line + 1)) / per * row_h, 8);
-    _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = vy }, .width = .fill, .height = .{ .px = vh }, .background = t.text.alpha(0.08) }, .none, null);
-    const caret_y = @as(f32, @floatFromInt(d.editor.area.caretLine())) / per * row_h - shift;
-    _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = caret_y }, .width = .fill, .height = .{ .px = 2 }, .background = t.accent.alpha(0.8) }, .none, null);
-    const ia = box.interaction();
-    if ((ia.pressed or ia.clicked) and ia.rect != null) {
-        const ry = c.input.mouse.y - ia.rect.?.y + shift;
-        const line = @as(usize, @intFromFloat(@max(ry / row_h * per, 0)));
-        const half = (d.last_line -| d.first_line) / 2;
-        d.editor.goToLine(@min(line + half, n - 1) + 1);
-        c.changed = true;
-    }
-}
-
-fn conflictBar(wb: *Workbench, c: *ui.Context, d: *Doc) void {
-    const t = c.theme;
-    const line = d.editor.area.caretLine();
-    const at = @import("conflicts.zig").at(d.blocks, line);
-    const bar = ui.div(c).row().wFull().h(28).px(12).gap(8).itemsCenter().bg(t.warning.alpha(0.12));
-    defer bar.end();
-    ui.icon(c, "exclamationmark.triangle", .{ .size = 12, .color = t.warning });
-    ui.text(c, if (at) |i| c.print("Conflict {d} of {d}", .{ i + 1, d.blocks.len }) else c.print("{d} conflicts", .{d.blocks.len}), .{ .size = 12 });
-    const btn = struct {
-        fn b(cc: *ui.Context, label: []const u8) bool {
-            return ui.button(cc, label, .{ .variant = .ghost, .size = 11 }).clicked;
-        }
-    }.b;
-    if (at != null) {
-        if (btn(c, "Accept Current")) wbgit.acceptConflict(wb, .current, false);
-        if (btn(c, "Accept Incoming")) wbgit.acceptConflict(wb, .incoming, false);
-        if (btn(c, "Accept Both")) wbgit.acceptConflict(wb, .both, false);
-    }
-    ui.spacer(c);
-    if (btn(c, "↑")) run_mod.run(wb, c, .prev_conflict);
-    if (btn(c, "↓")) run_mod.run(wb, c, .next_conflict);
-    if (btn(c, "All Current")) wbgit.acceptConflict(wb, .current, true);
-    if (btn(c, "All Incoming")) wbgit.acceptConflict(wb, .incoming, true);
+        break;
+    };
 }
 
 /// The file's review comments, under the editor.
@@ -519,7 +502,8 @@ fn welcome(wb: *Workbench, c: *ui.Context) void {
     // The Matrix's rain falls behind it while the window has the keyboard.
     if (std.mem.eql(u8, wb.shell.store.s.theme, "matrix")) {
         const p = wb.shell.palette;
-        @import("rain.zig").draw(c, &wb.shell.rain, c.size.w, c.size.h, .hex(p.text), .hex(p.accent), wb.shell.has_focus);
+        // Still where the system asks for less motion.
+        @import("rain.zig").draw(c, &wb.shell.rain, c.size.w, c.size.h, .hex(p.text), .hex(p.accent), wb.shell.has_focus and !ui.motion.reduced(c));
     }
     wb.shell.logo(c, 96);
     ui.text(c, "MyCode", .{ .size = 36, .weight = .bold, .color = t.muted });

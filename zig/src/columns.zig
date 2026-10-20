@@ -27,6 +27,8 @@ pub const Item = struct {
     /// A file's selection in this tab, when another tab shows the file too
     /// (each keeps its own caret; they share the text).
     sel: ?ui.TextSel = null,
+    /// Its preview shown rather than its source, likewise.
+    rendered: ?bool = null,
     /// Its editor's id in the last frame (which tab's text has the keyboard).
     area_id: u64 = 0,
 
@@ -83,9 +85,13 @@ pub const Column = struct {
 
 pub const Loc = struct { col: usize, idx: usize };
 
-const Closed = struct { path: []u8, col: usize, idx: usize, caret: usize };
+/// A tab closed, to open again: a file with its caret and scroll, or a
+/// terminal (a new shell in its folder, `path`).
+const Closed = struct { path: []u8, col: usize, idx: usize, caret: usize = 0, scroll: f32 = 0, terminal: bool = false };
 
-const Drag = struct { from: Loc, start: ui.Point, moving: bool = false };
+pub const Drag = struct { from: Loc, start: ui.Point, moving: bool = false };
+
+pub const TabRect = struct { col: usize, idx: usize, rect: ui.Rect };
 
 pub const Editors = struct {
     gpa: std.mem.Allocator,
@@ -104,10 +110,14 @@ pub const Editors = struct {
     /// Each column's strip and body as last laid out, for drops.
     strip_rects: [16]ui.Rect = undefined,
     body_rects: [16]ui.Rect = undefined,
+    /// Each tab as last laid out, for where a drop between tabs goes.
+    tab_rects: std.ArrayList(TabRect) = .empty,
     /// Asked of the workbench by the tab menu.
     request: ?Request = null,
+    /// The folder of the terminal `reopen_terminal` asks for, owned.
+    reopen_dir: ?[]u8 = null,
 
-    pub const Request = union(enum) { reveal: []const u8, open_changes: []const u8, to_panel: *Term, to_locked: *Term, copy_path: []const u8, new_terminal_in: usize };
+    pub const Request = union(enum) { reveal: []const u8, open_changes: []const u8, to_panel: *Term, to_locked: *Term, copy_path: []const u8, new_terminal_in: usize, reopen_terminal: Loc };
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io) Editors {
         var e: Editors = .{ .gpa = gpa, .io = io };
@@ -124,6 +134,8 @@ pub const Editors = struct {
             e.gpa.destroy(col);
         }
         e.cols.deinit(e.gpa);
+        if (e.reopen_dir) |d| e.gpa.free(d);
+        e.tab_rects.deinit(e.gpa);
         for (e.closed.items) |c| e.gpa.free(c.path);
         e.closed.deinit(e.gpa);
     }
@@ -285,15 +297,21 @@ pub const Editors = struct {
     pub fn close(e: *Editors, l: Loc) void {
         const it = e.at(l);
         if (e.auto_save) saveItem(it);
-        if (it.path()) |p| {
-            const caret = switch (it.body) {
-                .file => |d| d.editor.area.sel.caret,
-                else => 0,
-            };
-            if (e.gpa.dupe(u8, p)) |dp| {
-                e.closed.append(e.gpa, .{ .path = dp, .col = l.col, .idx = l.idx, .caret = caret }) catch e.gpa.free(dp);
-            } else |_| {}
-        }
+        const where: ?[]const u8 = switch (it.body) {
+            .terminal => |t| t.dir,
+            else => it.path(),
+        };
+        if (where) |p| if (e.gpa.dupe(u8, p)) |dp| {
+            var cl: Closed = .{ .path = dp, .col = l.col, .idx = l.idx, .terminal = it.body == .terminal };
+            switch (it.body) {
+                .file => |d| {
+                    cl.caret = d.editor.area.sel.caret;
+                    cl.scroll = d.scroll_y;
+                },
+                else => {},
+            }
+            e.closed.append(e.gpa, cl) catch e.gpa.free(dp);
+        } else |_| {};
         _ = e.take(l);
         it.destroy(e.gpa);
         e.dropEmpty(l.col);
@@ -353,19 +371,35 @@ pub const Editors = struct {
         };
     }
 
+    /// Opens the tab closed last again where it was: a file at its caret
+    /// and scroll, a terminal as a new shell in its folder.
     pub fn reopenClosed(e: *Editors) void {
         const c = e.closed.pop() orelse return;
+        const col = @min(c.col, e.cols.items.len - 1);
+        if (c.terminal) {
+            if (e.reopen_dir) |d| e.gpa.free(d);
+            e.reopen_dir = c.path;
+            e.request = .{ .reopen_terminal = .{ .col = col, .idx = c.idx } };
+            return;
+        }
         defer e.gpa.free(c.path);
         if (!fs.exists(e.io, c.path)) return;
-        if (c.col < e.cols.items.len) e.focus = c.col;
+        e.focus = col;
         const it = e.openFile(c.path, false) catch return;
+        // Back at its place in its column.
+        if (e.currentLoc()) |l| if (l.col != col or l.idx != c.idx) e.move(l, col, c.idx);
         switch (it.body) {
-            .file => |d| d.editor.area.collapse(@min(c.caret, d.editor.area.len())),
+            .file => |d| {
+                d.editor.area.collapse(@min(c.caret, d.editor.area.len()));
+                d.restore_scroll = c.scroll;
+            },
             else => {},
         }
     }
 
     pub fn forgetClosed(e: *Editors) void {
+        if (e.reopen_dir) |d| e.gpa.free(d);
+        e.reopen_dir = null;
         for (e.closed.items) |c| e.gpa.free(c.path);
         e.closed.clearRetainingCapacity();
     }
@@ -401,6 +435,7 @@ pub const Editors = struct {
                     return;
                 };
                 copy.sel = d.editor.area.sel;
+                copy.rendered = d.rendered;
                 e.cols.items[ni].items.append(e.gpa, copy) catch {
                     copy.destroy(e.gpa);
                     return;
@@ -443,6 +478,12 @@ pub const Editors = struct {
         const col = e.cols.items[ci];
         const bar = ui.div(c).row().wFull().h(34).bg(chrome).itemsStretch();
         var close_at: ?usize = null;
+        // The tabs' places, made again as the strips are built.
+        var k: usize = e.tab_rects.items.len;
+        while (k > 0) {
+            k -= 1;
+            if (e.tab_rects.items[k].col == ci) _ = e.tab_rects.swapRemove(k);
+        }
         for (col.items.items, 0..) |it, i| {
             c.keyed(it);
             const on = i == col.active;
@@ -466,7 +507,9 @@ pub const Editors = struct {
             x.end();
             const ia = cell.interaction();
             cell.end();
-            if (x_clicked) {
+            if (ia.rect) |r| e.tab_rects.append(e.gpa, .{ .col = ci, .idx = i, .rect = r }) catch {};
+            // The middle button closes a tab, as in browsers.
+            if (x_clicked or (ia.hovered and c.input.middle_pressed)) {
                 close_at = i;
             } else if (ia.double_clicked) {
                 it.preview = false;
@@ -540,41 +583,8 @@ pub const Editors = struct {
         c.changed = true;
     }
 
-    /// Ends a tab drag as the pointer is let go: on a strip, the tab goes
-    /// there; on a column's right edge, into a new column.
+    /// Ends a tab drag as the pointer is let go (`tabdrag.zig`).
     pub fn endDrag(e: *Editors, c: *ui.Context) void {
-        const dg = &(e.drag orelse return);
-        if (c.input.down) {
-            const d = c.input.mouse;
-            if (!dg.moving and (@abs(d.x - dg.start.x) > 6 or @abs(d.y - dg.start.y) > 6)) dg.moving = true;
-            if (dg.moving) {
-                c.wants_moves = true;
-                const ghost = ui.div(c).absolute().offset(d.x + 8, d.y + 8).px(10).py(4).rounded(4).bg(c.theme.surface_hover).border(c.theme.border);
-                ui.text(c, e.at(dg.from).title(c), .{ .size = 12 });
-                ghost.end();
-            }
-            return;
-        }
-        defer e.drag = null;
-        if (!dg.moving) return;
-        const p = c.input.mouse;
-        const n = @min(e.cols.items.len, e.strip_rects.len);
-        for (0..n) |ci| {
-            if (e.strip_rects[ci].contains(p)) {
-                if (ci != dg.from.col) e.move(dg.from, ci, null);
-                c.changed = true;
-                return;
-            }
-            const r = e.body_rects[ci];
-            if (r.contains(p)) {
-                if (p.x > r.x + r.w - 60) {
-                    const ni = e.addColumn(ci + 1) catch return;
-                    const src = if (dg.from.col >= ni) dg.from.col + 1 else dg.from.col;
-                    e.move(.{ .col = src, .idx = dg.from.idx }, ni, null);
-                } else if (ci != dg.from.col) e.move(dg.from, ci, null);
-                c.changed = true;
-                return;
-            }
-        }
+        @import("tabdrag.zig").endDrag(e, c);
     }
 };

@@ -2,6 +2,7 @@
 //! files and folders, renames and the Recycle Bin, saving as, terminals in
 //! the panel and in columns, and the boxes over the window.
 const std = @import("std");
+const tabdrag = @import("tabdrag.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const fs = @import("fs.zig");
@@ -49,6 +50,7 @@ pub fn fileDragFrame(wb: *Workbench, c: *ui.Context) void {
         if (!fd.moving and (@abs(m.x - fd.start.x) > 8 or @abs(m.y - fd.start.y) > 8)) fd.moving = true;
         if (fd.moving) {
             c.wants_moves = true;
+            if (tabdrag.at(&wb.editors, m)) |t| tabdrag.marker(c, &wb.editors, t);
             const ghost = ui.div(c).row().absolute().offset(m.x + 10, m.y + 8).px(8).py(4).gap(6).itemsCenter().rounded(4).bg(c.theme.surface_hover).border(c.theme.border);
             @import("icons.zig").file(c, std.fs.path.basename(fd.path));
             ui.text(c, std.fs.path.basename(fd.path), .{ .size = 12 });
@@ -71,23 +73,31 @@ pub fn fileDragFrame(wb: *Workbench, c: *ui.Context) void {
         .terminal => |t| if (t.rect != null and t.rect.?.contains(p)) return t.typePaths(&paths),
         else => {},
     };
-    for (0..n) |ci| {
-        const strip = ed.strip_rects[ci];
-        const body = ed.body_rects[ci];
-        if (!strip.contains(p) and !body.contains(p)) continue;
-        var target = ci;
-        if (body.contains(p) and p.x > body.x + body.w - 60) target = ed.addColumn(ci + 1) catch ci;
-        openIn(wb, fd.path, target);
-        c.changed = true;
-        return;
-    }
+    _ = dropFiles(wb, &paths, p);
+    c.changed = true;
 }
 
-/// Opens a file in a column (a locked one too, when dropped there).
-fn openIn(wb: *Workbench, path: []const u8, col: usize) void {
+/// Files let go at `p` over the columns: each opens where it lands,
+/// between tabs, in a column, or in a new one at a column's edge. False
+/// when `p` is over no column.
+pub fn dropFiles(wb: *Workbench, paths: []const []const u8, p: ui.Point) bool {
+    const ed = &wb.editors;
+    const t = tabdrag.at(ed, p) orelse return false;
+    const ci = tabdrag.column(ed, t, null) orelse return false;
+    var idx = t.idx;
+    for (paths) |path| {
+        openIn(wb, path, ci, idx);
+        if (idx) |i| idx = i + 1;
+    }
+    return true;
+}
+
+/// Opens a file in a column (a locked one too, when dropped there), at
+/// place `idx` of its strip or after the tab shown.
+fn openIn(wb: *Workbench, path: []const u8, col: usize, idx: ?usize) void {
     const ed = &wb.editors;
     if (ed.findPath(path)) |l| {
-        if (l.col != col) ed.move(l, col, null) else ed.show(l);
+        if (l.col != col or idx != null) ed.move(l, col, if (idx) |i| (if (l.col == col and i > l.idx) i - 1 else i) else null) else ed.show(l);
         return;
     }
     const body: @import("columns.zig").Body = if (@import("viewer.zig").isImage(path))
@@ -95,7 +105,8 @@ fn openIn(wb: *Workbench, path: []const u8, col: usize) void {
     else
         .{ .file = @import("doc.zig").Doc.create(wb.gpa, wb.io, path) catch return };
     const it = ed.newItem(body, false) catch return;
-    _ = ed.add(it, col) catch {};
+    const l = ed.add(it, col) catch return;
+    if (idx) |i| if (i != l.idx) ed.move(l, col, if (i > l.idx) i - 1 else i);
 }
 
 /// Copies the files on the clipboard into a folder; a name taken gets
@@ -441,6 +452,14 @@ pub fn tabRequest(wb: *Workbench, c: *ui.Context, req: columns.Editors.Request) 
         .to_locked => |t| toLockedColumn(wb, t),
         .copy_path => |p| _ = myzig.clipboard.writeText(p),
         .new_terminal_in => |ci| newTerminalIn(wb, ci, null, wb.root),
+        .reopen_terminal => |l| {
+            const ed = &wb.editors;
+            const dir = ed.reopen_dir orelse wb.root;
+            newTerminalIn(wb, l.col, null, dir);
+            if (ed.reopen_dir) |d| wb.gpa.free(d);
+            ed.reopen_dir = null;
+            if (ed.currentLoc()) |at| if (at.col == l.col and at.idx != l.idx) ed.move(at, l.col, l.idx);
+        },
     }
     c.changed = true;
 }

@@ -614,13 +614,16 @@ pub const Shell = struct {
                 else => {},
             };
         }
+        // Folders open as projects; files where they land over the columns.
+        var files: std.ArrayList([]const u8) = .empty;
+        defer files.deinit(sh.gpa);
         for (paths) |p| {
-            if (fs.isDirectory(sh.io, p)) {
-                sh.openFolder(p, false);
-            } else if (sh.active()) |wb| {
-                @import("wb_files.zig").openPath(wb, p, false);
-            }
+            if (fs.isDirectory(sh.io, p)) sh.openFolder(p, false) else files.append(sh.gpa, p) catch {};
         }
+        if (sh.active()) |wb| if (files.items.len > 0) {
+            const wbfiles = @import("wb_files.zig");
+            if (!wbfiles.dropFiles(wb, files.items, sh.last_mouse)) for (files.items) |p| wbfiles.openPath(wb, p, false);
+        };
         w.redraw();
     }
 
