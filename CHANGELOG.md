@@ -5,6 +5,11 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Scrolling into a block no longer makes the editor and its minimap jump back and forth: the block's line sticking
+  above the editor gave the editor another id, which lost its scroll, which took the line away again, every other
+  frame. Bars appearing above the editor no longer lose its scroll either, and the wheel over the minimap glides as
+  it does over the editor.
+
 - The minimap's slider follows the editor as it scrolls, its size the lines in view: it read a scroll length the
   editor never sets, so it sat in the wrong place, as tall as the file, and jumped as the editor scrolled.
 - `wordWrap` takes VS Code's values too: `"on"`, `"off"`, and `"wordWrapColumn"` or `"bounded"` to wrap at

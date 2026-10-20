@@ -341,6 +341,9 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
     d.editor.whitespace = c.theme.muted.alpha(0.6);
     notes(wb, c, d, rel);
     {
+        // Keyed: the bars above it (notes) coming and going leave the
+        // editor its id, and so its scroll.
+        c.keyed(d);
         const row = ui.div(c).row().wFull().grow().itemsStretch();
         defer row.end();
         stickyAndEditor(wb, c, d, chrome);
@@ -375,6 +378,10 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
     // Sticky scroll: the lines opening the blocks around the first line in view.
     var buf: [4]symbols.Symbol = undefined;
     const pinned = symbols.around(&buf, wb.syms, d.first_line);
+    // In a box of their own, there or not: the editor after them keeps its
+    // id (and so its scroll) as they come and go. Its scroll changing them,
+    // they flipped it back and forth every frame.
+    const sticky = ui.div(c).column().wFull();
     for (pinned) |sy| if (sy.line < d.first_line) {
         const b = ui.div(c).row().wFull().h(20).px(48).itemsCenter().bg(.hex(wb.shell.palette.chrome)).hover(t.surface_hover);
         const line = d.editor.area.doc.line(c.alloc(), sy.line);
@@ -382,6 +389,7 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
         if (b.clicked()) d.editor.goToLine(sy.line + 1);
         b.end();
     };
+    sticky.end();
     if (d.restore_scroll) |y| if (d.editor.area.scroll_id != 0) {
         c.scroll.put(c.gpa, d.editor.area.scroll_id, y) catch {};
         d.restore_scroll = null;

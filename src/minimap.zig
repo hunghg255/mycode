@@ -31,6 +31,9 @@ pub const State = struct {
     height: f32 = 600,
     /// It showed in the last frame (the editor's text then lacks its width).
     shown: bool = false,
+    /// How far the editor scrolled, as last laid out: kept for a frame
+    /// whose layout of the editor came from the cache.
+    end: f32 = 0,
 };
 
 /// Where the file sits in a minimap `h` high, scrolled with the editor
@@ -169,7 +172,8 @@ pub fn view(c: *ui.Context, d: *Doc, width_setting: f32, pal: *const themes.Pale
     const scroll = c.scroll.get(id) orelse 0;
     // How far the editor scrolls, from its last layout (`scroll_max` is
     // kept only for boxes that follow their end).
-    const end = c.scroll_limit.get(id) orelse 0;
+    const end = c.scroll_limit.get(id) orelse m.end;
+    m.end = end;
     var g: Geo = .of(d.editor.area.doc.lineCount(), scroll, end, m.height);
     const hovered = box.hovered();
     const pa: *Paint = c.alloc().create(Paint) catch return null;
@@ -200,9 +204,9 @@ pub fn view(c: *ui.Context, d: *Doc, width_setting: f32, pal: *const themes.Pale
             c.changed = true;
         }
     }
-    // The wheel over it scrolls the editor.
+    // The wheel over it scrolls the editor, gliding as over the editor.
     if (hovered and c.input.scroll.y != 0) {
-        c.scroll.put(c.gpa, id, std.math.clamp(scroll - c.input.scroll.y, 0, end)) catch {};
+        c.glideBy(id, c.input.scroll.y);
         c.input.scroll = .{};
         c.changed = true;
     }
