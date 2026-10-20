@@ -134,6 +134,11 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
         .prev_terminal => wb.panel.cycle(false),
         .toggle_wrap => if (doc) |d| {
             d.own_wrap = !(d.own_wrap orelse wb.shell.store.s.wordWrap);
+        } else if (ed.current()) |it| switch (it.body) {
+            // A diff's lines wrap, in this tab.
+            .changes => |ch| ch.list.wrap = !(ch.list.wrap orelse wb.shell.store.s.wordWrap),
+            .commit => |cv| cv.list.wrap = !(cv.list.wrap orelse wb.shell.store.s.wordWrap),
+            else => {},
         },
         .toggle_preview => if (doc) |d| if (viewer.isMarkdown(d.path) or viewer.isSvg(d.path)) {
             d.rendered = !d.rendered;

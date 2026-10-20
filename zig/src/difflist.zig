@@ -50,6 +50,7 @@ pub const Event = union(enum) {
     comment: struct { entry: usize, first: usize, last: usize, snippet: []const u8 },
     delete_comment: usize,
     edit_comment: usize,
+    send_review,
 };
 
 /// Reads a side's text: the app's (a blob, or the open file's text).
@@ -65,7 +66,8 @@ const Ref = union(enum) {
     header: usize,
     loading: usize,
     hunk: struct { entry: usize, hunk: usize, row: usize },
-    row: struct { entry: usize, row: usize },
+    /// A row of a diff, or a piece of it past the first when lines wrap.
+    row: struct { entry: usize, row: usize, part: u16 = 0 },
     comment: struct { entry: usize, index: usize },
 };
 
@@ -83,6 +85,17 @@ pub const DiffList = struct {
     /// The editor's font: OpenType features and weight.
     features: []const u8 = "",
     weight: u16 = 0,
+    /// Long lines wrap: this tab's choice, else the Word Wrap setting's.
+    wrap: ?bool = null,
+    wrap_setting: bool = false,
+    /// Every unchanged line shows, rather than three around the changes.
+    full: bool = false,
+    /// Characters a side has room for, as lines wrap.
+    cols: usize = 0,
+    /// The entry at the top of the view, which source control follows.
+    top_entry: ?usize = null,
+    /// Review comments wait to be sent (the bar's Send button).
+    reviewing: bool = false,
     /// The rows of the last frame, and those built.
     refs: std.ArrayList(Ref) = .empty,
     first_built: usize = 0,
@@ -218,6 +231,13 @@ pub const DiffList = struct {
             const d = &(e.dv orelse continue);
             d.setMode(if (split_mode) .split else .unified);
             d.build();
+            if (dl.full) for (d.rows.items) |row| if (row.kind == .gap and row.hidden > 0) {
+                d.expandAll();
+                d.build();
+                break;
+            };
+            const wrap = dl.wrap orelse dl.wrap_setting;
+            if (wrap) dl.cols = ui.diffWrapColumns(c, d, .{ .size = 12.5, .digits = 4 }, dl.width, split_mode);
             var hunk: usize = 0;
             var prev_change = false;
             for (d.rows.items, 0..) |row, ri| {
@@ -227,7 +247,8 @@ pub const DiffList = struct {
                     hunk += 1;
                 }
                 prev_change = change;
-                dl.refs.append(dl.gpa, .{ .row = .{ .entry = ei, .row = ri } }) catch return;
+                const parts = if (wrap) ui.diffRowParts(d, ri, dl.cols) else 1;
+                for (0..parts) |part| dl.refs.append(dl.gpa, .{ .row = .{ .entry = ei, .row = ri, .part = @intCast(part) } }) catch return;
                 // Comments end on a new line: under it.
                 if (review) |rv| if (row.new) |n| for (rv.list.items, 0..) |cm, ci| {
                     if (cm.outdated or cm.last != n or !std.mem.eql(u8, cm.path, e.path)) continue;
@@ -235,7 +256,6 @@ pub const DiffList = struct {
                 };
             }
         }
-        _ = c;
         if (dl.sel >= dl.refs.items.len) dl.sel = dl.refs.items.len -| 1;
         if (dl.anchor >= dl.refs.items.len) dl.anchor = dl.sel;
     }
@@ -317,7 +337,7 @@ pub const DiffList = struct {
         var last: usize = 0;
         for (lo..hi + 1) |i| switch (dl.refs.items[i]) {
             .row => |r| {
-                if (r.entry != ei) continue;
+                if (r.entry != ei or r.part > 0) continue;
                 const d = &(dl.entries.items[r.entry].dv orelse continue);
                 const row = d.rows.items[r.row];
                 if (row.kind == .gap) continue;
@@ -396,12 +416,19 @@ pub const DiffList = struct {
                 };
                 dl.layout_chosen = true;
             }
+            const wrapping = dl.wrap orelse dl.wrap_setting;
+            if (tool(c, if (wrapping) "Wrap ✓" else "Wrap")) dl.wrap = !wrapping;
+            if (tool(c, if (dl.full) "Full Files ✓" else "Full Files")) {
+                dl.full = !dl.full;
+                if (!dl.full) for (dl.entries.items) |*e| if (e.dv) |*d| d.collapseAll();
+            }
             if (tool(c, "Fold All")) for (dl.entries.items) |*e| {
                 e.folded = true;
             };
             if (tool(c, "Unfold All")) for (dl.entries.items) |*e| {
                 e.folded = false;
             };
+            if (dl.reviewing and ui.button(c, "Send Review", .{ .variant = .primary, .size = 11 }).clicked) ev = .send_review;
         }
         // Where to scroll: an entry to show, a row to keep in view.
         if (dl.reveal_entry) |re| {
@@ -415,6 +442,10 @@ pub const DiffList = struct {
         }
         const to: ?f32 = if (dl.scroll_to) |i| @as(f32, @floatFromInt(i)) * row_h else null;
         dl.scroll_to = null;
+        const list_id = c.peekId(null);
+        const top_row: usize = @intFromFloat(@max(0, @floor((to orelse c.scroll.get(list_id) orelse 0) / row_h)));
+        dl.top_entry = if (top_row < n) dl.entryOf(top_row) else null;
+        const sel_hunk = if (dl.sel < n) dl.hunkAt(dl.sel) else null;
         var rows = ui.list(c, .{ .count = n, .row_height = row_h, .scroll_to = to });
         var first: usize = std.math.maxInt(usize);
         var last: usize = 0;
@@ -440,7 +471,26 @@ pub const DiffList = struct {
                 },
                 .row => |rr| {
                     const e = &dl.entries.items[rr.entry];
-                    if (e.dv) |*d| ui.diffRow(c, d, rr.row, opts);
+                    if (e.dv) |*d| {
+                        ui.diffRowPart(c, d, rr.row, opts, rr.part, if (dl.wrap orelse dl.wrap_setting) dl.cols else 0);
+                        const row = d.rows.items[rr.row];
+                        // The change the selection is in: a bar along the left.
+                        const change = row.kind == .added or row.kind == .deleted or row.new_kind == .added;
+                        if (change and sel_hunk != null) if (dl.hunkAt(i)) |h| if (h.entry == sel_hunk.?.entry and h.hunk == sel_hunk.?.hunk) {
+                            _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 0 }, .width = .{ .px = 3 }, .height = .fill, .background = t.accent }, .none, null);
+                        };
+                        // A comment on the line under the pointer: "+".
+                        if (rr.part == 0 and row.new != null and cell.hovered()) {
+                            const plus = ui.div(c).absolute().offset(2, 1).w(row_h - 2).h(row_h - 2).center().rounded(4).bg(t.accent);
+                            ui.text(c, "+", .{ .size = 11, .weight = .bold, .color = t.accent_text });
+                            if (plus.clicked()) {
+                                dl.sel = i;
+                                dl.anchor = i;
+                                if (dl.chosenText(c, false)) |ct| ev = .{ .comment = .{ .entry = ct.entry, .first = ct.first, .last = ct.last, .snippet = ct.text } };
+                            }
+                            plus.end();
+                        }
+                    }
                 },
                 .comment => |cm| if (review) |rv| if (cm.index < rv.list.items.len) {
                     const k = rv.list.items[cm.index];
@@ -465,6 +515,13 @@ pub const DiffList = struct {
             }
         }
         rows.end();
+        // The header of the file at the top, kept there as its rows scroll.
+        if (dl.top_entry) |te| if (top_row < n and dl.refs.items[top_row] != .header) {
+            const pin = ui.div(c).absolute().offset(0, 30).wFull().h(row_h);
+            const a = dl.header(c, te, row_h, chrome);
+            if (a != .none) ev = a;
+            pin.end();
+        };
         if (first != std.math.maxInt(usize)) {
             dl.first_built = first;
             dl.last_built = last;

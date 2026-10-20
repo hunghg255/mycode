@@ -621,6 +621,7 @@ pub fn diffEvent(wb: *Workbench, c: *ui.Context, dl: *difflist.DiffList, ev: dif
             wb.prompt.askText(g, .diff_comment, if (cm.first == cm.last) "A comment on this line" else "A comment on these lines", existing, target);
         },
         .delete_comment => |i| if (i < wb.review.list.items.len) wb.review.remove(i),
+        .send_review => @import("wb_run.zig").run(wb, c, .send_review),
         .edit_comment => |i| if (i < wb.review.list.items.len) {
             const k = wb.review.list.items[i];
             wb.diff_comment.clearRetainingCapacity();

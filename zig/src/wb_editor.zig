@@ -234,7 +234,10 @@ fn column(wb: *Workbench, c: *ui.Context, chrome: ui.Color, ci: usize) void {
                 ch.versions = versions;
                 ch.list.follow(wbgit.reader(wb));
             }
+            const before = ch.list.top_entry;
             diffList(wb, c, &ch.list, chrome);
+            // Source control chooses the file scrolled to the top.
+            if (ch.list.top_entry) |te| if (before != te and te < ch.list.entries.items.len) wb.scm.follow(ch.list.entries.items[te].path);
         },
         .commit => |cv| {
             cv.header(c, chrome);
@@ -251,6 +254,8 @@ fn diffList(wb: *Workbench, c: *ui.Context, dl: *@import("difflist.zig").DiffLis
     const want = st.s.diffLayout;
     dl.layout = if (std.mem.eql(u8, want, "split")) .split else if (std.mem.eql(u8, want, "inline")) .inline_ else .auto;
     dl.features = st.s.fontFeatures;
+    dl.wrap_setting = st.s.wordWrap;
+    dl.reviewing = wb.review.list.items.len > 0;
     dl.weight = @intFromFloat(st.s.fontWeight);
     const ev = dl.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette));
     if (dl.layout_chosen) {

@@ -166,6 +166,14 @@ pub const Scm = struct {
         };
     }
 
+    /// Chooses `path` alone: the file the Changes tab shows at its top.
+    pub fn follow(s: *Scm, path: []const u8) void {
+        if (s.chosen.items.len == 1 and std.mem.eql(u8, s.chosen.items[0], path)) return;
+        s.clearChosen();
+        s.choose(path);
+        s.setAnchor(path);
+    }
+
     fn setAnchor(s: *Scm, path: []const u8) void {
         if (s.anchor) |a| s.gpa.free(a);
         s.anchor = s.gpa.dupe(u8, path) catch null;
