@@ -40,6 +40,11 @@ needs a `## <version>` section here, or its build fails.
   its own color, the gear at its foot), the sidebar's views as buttons with the count of changes, and the
   terminal panel's buttons (new, profiles, to the editor area, kill, maximize, close). Its window's buttons are
   light on a dark theme.
+- The Zig build asks before closing a tab, a project or a window, or quitting, with changes that would be lost
+  (**Save**, **Don't Save**, **Cancel**), and the status bar says **Deleted on disk** of a file gone from the disk.
+- The Zig build colors some sixty more languages (C#, Kotlin, Swift, Haskell, OCaml, Elixir, Clojure, Nix, Julia,
+  Terraform, Perl, LaTeX and others), HTML, XML, Vue and Svelte with their scripts and styles, Markdown and diffs,
+  and names them in the status bar. **Toggle Line Comment** does nothing in a language without line comments.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

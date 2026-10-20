@@ -222,8 +222,40 @@ pub fn languageName(name: []const u8) []const u8 {
         .{ ".cpp", "C++" },            .{ ".java", "Java" },         .{ ".kt", "Kotlin" },
         .{ ".cs", "C#" },              .{ ".rb", "Ruby" },           .{ ".php", "PHP" },
         .{ ".lua", "Lua" },            .{ ".sql", "SQL" },           .{ ".swift", "Swift" },
+        .{ ".htm", "HTML" }, .{ ".xhtml", "HTML" }, .{ ".xml", "XML" },
+        .{ ".svg", "XML" }, .{ ".plist", "XML" }, .{ ".csproj", "XML" },
+        .{ ".xaml", "XML" }, .{ ".vue", "Vue" }, .{ ".svelte", "Svelte" },
+        .{ ".astro", "Astro" }, .{ ".markdown", "Markdown" }, .{ ".mdx", "MDX" },
+        .{ ".diff", "Diff" }, .{ ".patch", "Diff" }, .{ ".scss", "SCSS" },
+        .{ ".sass", "Sass" }, .{ ".less", "CSS" }, .{ ".hpp", "C++" },
+        .{ ".cc", "C++" }, .{ ".cxx", "C++" }, .{ ".m", "Objective-C" },
+        .{ ".dart", "Dart" }, .{ ".scala", "Scala" }, .{ ".groovy", "Groovy" },
+        .{ ".hs", "Haskell" }, .{ ".elm", "Elm" }, .{ ".ml", "OCaml" },
+        .{ ".mli", "OCaml" }, .{ ".fs", "FSharp" }, .{ ".fsx", "FSharp" },
+        .{ ".ex", "Elixir" }, .{ ".exs", "Elixir" }, .{ ".erl", "Erlang" },
+        .{ ".clj", "Clojure" }, .{ ".cljs", "Clojure" }, .{ ".lisp", "Common Lisp" },
+        .{ ".el", "EmacsLisp" }, .{ ".scm", "Scheme" }, .{ ".rkt", "Racket" },
+        .{ ".fnl", "Fennel" }, .{ ".nix", "Nix" }, .{ ".jl", "Julia" },
+        .{ ".tf", "Terraform" }, .{ ".hcl", "HCL" }, .{ ".r", "R" },
+        .{ ".pl", "Perl" }, .{ ".pm", "Perl" }, .{ ".nim", "Nim" },
+        .{ ".cr", "Crystal" }, .{ ".gd", "GDScript" }, .{ ".cmake", "CMake" },
+        .{ ".vim", "VimL" }, .{ ".tex", "TeX" }, .{ ".f90", "Fortran" },
+        .{ ".vb", "VB.net" }, .{ ".bat", "Batchfile" }, .{ ".cmd", "Batchfile" },
+        .{ ".asm", "NASM" }, .{ ".graphql", "GraphQL" }, .{ ".gql", "GraphQL" },
+        .{ ".proto", "Protocol Buffer" }, .{ ".glsl", "GLSL" }, .{ ".hlsl", "HLSL" },
+        .{ ".odin", "Odin" }, .{ ".gleam", "Gleam" }, .{ ".zsh", "Bash" },
+        .{ ".bash", "Bash" }, .{ ".fish", "Fish" }, .{ ".ini", "INI" },
+        .{ ".cfg", "INI" }, .{ ".dockerfile", "Docker" }, .{ ".psm1", "PowerShell" },
+        .{ ".jsonc", "JSON" }, .{ ".mts", "TypeScript" }, .{ ".cts", "TypeScript" },
+        .{ ".cjs", "JavaScript" }, .{ ".pyw", "Python" }, .{ ".bzl", "Starlark" },
+        .{ ".vhd", "VHDL" }, .{ ".v", "V" }, .{ ".sv", "SystemVerilog" },
+        .{ ".kts", "Kotlin" }, .{ ".rake", "Ruby" }, .{ ".bib", "BibTeX" },
     };
     for (names) |n| if (std.ascii.eqlIgnoreCase(n[0], ext)) return n[1];
+    const base = std.fs.path.basename(name);
+    if (std.ascii.eqlIgnoreCase(base, "Dockerfile")) return "Docker";
+    if (std.ascii.eqlIgnoreCase(base, "Makefile")) return "Makefile";
+    if (std.ascii.eqlIgnoreCase(base, "CMakeLists.txt")) return "CMake";
     return "Plain Text";
 }
 
