@@ -155,6 +155,7 @@ pub const Workbench = struct {
             .runner = .{ .gpa = gpa, .io = io },
         };
         wb.editors.root = r;
+        wb.prompt.io = io;
         wb.runner.ctx = wb;
         wb.runner.on_done = wbgit.onGitDone;
         wb.runner.window = shell.window;

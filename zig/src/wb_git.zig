@@ -85,7 +85,7 @@ fn graphEvent(wb: *Workbench, c: *ui.Context, ge: @import("graph.zig").Graph.Eve
         .reset => |h| wb.ask(.reset, h, c.print("Reset {s} to {s}?", .{ br, h[0..@min(h.len, 7)] }), "Soft keeps the changes of the commits after it staged; Mixed keeps them unstaged; Hard discards them and every change of the work tree.", &.{ "Cancel", "Soft", "Mixed", "Hard" }),
         .revert => |r| wb.ask(.revert, if (r.merge) c.print("m:{s}", .{r.hash}) else r.hash, c.print("Revert {s}?", .{r.hash[0..@min(r.hash.len, 7)]}), if (r.merge) "A new commit takes back its changes, against its first parent." else "A new commit takes back its changes.", &.{ "Cancel", "Revert" }),
         .cherry_pick => |r| slow(wb, .cherry_pick, if (r.merge) &.{ "cherry-pick", "-m", "1", r.hash } else &.{ "cherry-pick", r.hash }, r.hash),
-        .rename_branch => |n| wb.prompt.ask(.rename_branch, "Rename the branch", n, n),
+        .rename_branch => |n| renameBranchPrompt(wb, n),
         .delete_branch, .delete_remote => |n| wb.ask(.delete_branch, n, c.print("Delete the branch “{s}”?", .{n}), if (ge == .delete_remote) "It is deleted on its remote." else "The toast's Undo brings it back.", &.{ "Cancel", "Delete" }),
         else => {},
     }
@@ -130,10 +130,19 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
         .git_sync => slow(wb, .sync, &.{}, ""),
         .git_switch_branch => wb.picker.show(t.?, .switch_branch),
         .git_delete_branch => wb.picker.show(t.?, .delete_branch),
-        .git_create_branch => wb.prompt.ask(.new_branch, "A new branch's name", "", ""),
-        .git_rename_branch => wb.prompt.ask(.rename_branch, "Rename the branch", wb.scm.branch orelse "", ""),
-        .git_stash => wb.prompt.ask(.stash, "Stash: a message (or none)", "", ""),
-        .git_stash_untracked => wb.prompt.ask(.stash_untracked, "Stash with untracked files: a message (or none)", "", ""),
+        .git_create_branch => {
+            wb.prompt.ask(.new_branch, "Create Branch…", "", "");
+            if (wb.scm.branch) |b| wb.prompt.hint(c.print("from {s}", .{b}));
+        },
+        .git_rename_branch => renameBranchPrompt(wb, wb.scm.branch orelse ""),
+        .git_stash => {
+            wb.prompt.ask(.stash, "Stash…", "", "");
+            wb.prompt.hint("a message, or none");
+        },
+        .git_stash_untracked => {
+            wb.prompt.ask(.stash_untracked, "Stash (Include Untracked)…", "", "");
+            wb.prompt.hint("a message, or none");
+        },
         .git_stash_apply_latest => slow(wb, .stash_apply, &.{ "stash", "apply", "--index" }, "stash@{0}"),
         .git_stash_pop => slow(wb, .stash_pop, &.{ "stash", "pop", "--index" }, "stash@{0}"),
         .git_stash_apply => wb.picker.show(t.?, .stash_apply),
@@ -366,8 +375,14 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
             defer g.free(hh);
             checkoutCommit(wb, hh);
         },
-        .branch_at => |h| wb.prompt.ask(.new_branch_at, "A new branch's name, at this commit", "", h),
-        .tag_at => |h| wb.prompt.ask(.new_tag, "A new tag's name", "", h),
+        .branch_at => |h| {
+            wb.prompt.ask(.new_branch_at, "Create Branch…", "", h);
+            wb.prompt.hint(c.print("at {s}", .{h[0..@min(7, h.len)]}));
+        },
+        .tag_at => |h| {
+            wb.prompt.ask(.new_tag, "Create Tag…", "", h);
+            wb.prompt.hint(c.print("at {s}", .{h[0..@min(7, h.len)]}));
+        },
         .stage => |ps| _ = quick(wb, withPaths(c, &.{ "add", "--" }, ps)),
         .unstage => |ps| _ = quick(wb, withPaths(c, &.{ "reset", "-q", "HEAD", "--" }, ps)),
         .discard => |all| {
@@ -409,7 +424,8 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
             const ps = files(wb, c, all);
             if (ps.len == 0) return;
             const list = std.mem.join(c.alloc(), "\n", ps) catch return;
-            wb.prompt.ask(.stash_files, if (ps.len == 1) "Stash this file: a message (or none)" else "Stash these files: a message (or none)", "", list);
+            wb.prompt.ask(.stash_files, if (ps.len == 1) c.print("Stash {s}…", .{std.fs.path.basename(ps[0])}) else c.print("Stash {d} Files…", .{ps.len}), "", list);
+            wb.prompt.hint("a message, or none");
         },
     }
 }
@@ -425,6 +441,12 @@ fn files(wb: *Workbench, c: *ui.Context, paths: []const []const u8) []const []co
         if (!sub) out.append(c.alloc(), p) catch {};
     }
     return out.items;
+}
+
+fn renameBranchPrompt(wb: *Workbench, name: []const u8) void {
+    wb.prompt.ask(.rename_branch, "Rename Branch…", name, name);
+    var buf: [200]u8 = undefined;
+    wb.prompt.hint(std.fmt.bufPrint(&buf, "rename {s}", .{name}) catch "");
 }
 
 fn withPaths(c: *ui.Context, args: []const []const u8, paths: []const []const u8) []const []const u8 {
@@ -610,7 +632,7 @@ pub fn pickerEvent(wb: *Workbench, c: *ui.Context, pick: @import("branches.zig")
             wb.ask(.delete_branch, b.name, c.print("Delete the branch “{s}”?", .{b.name}), c.print("Its upstream, {s}, can go too, on its remote. The toast's Undo brings the local branch back.", .{b.upstream}), &.{ "Cancel", "Delete", "Delete with Upstream" })
         else
             wb.ask(.delete_branch, b.name, c.print("Delete the branch “{s}”?", .{b.name}), if (b.remote) "It is deleted on its remote." else "The toast's Undo brings it back.", &.{ "Cancel", "Delete" }),
-        .rename => |b| wb.prompt.ask(.rename_branch, "Rename the branch", b.name, b.name),
+        .rename => |b| renameBranchPrompt(wb, b.name),
         .stash => |s| switch (s.mode) {
             .stash_apply => slow(wb, .stash_apply, &.{ "stash", "apply", "--index", s.name }, s.name),
             .stash_pop => slow(wb, .stash_pop, &.{ "stash", "pop", "--index", s.name }, s.name),

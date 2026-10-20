@@ -25,7 +25,10 @@ pub fn explorerEvent(wb: *Workbench, c: *ui.Context, ev: explorer_mod.Event) voi
         .open => |o| openPath(wb, o.path, o.preview),
         .new_file => |dir| askNewFile(wb, dir, false),
         .new_folder => |dir| askNewFile(wb, dir, true),
-        .rename => |p| wb.prompt.ask(.rename, "Rename", std.fs.path.basename(p), p),
+        .rename => |p| {
+            wb.prompt.ask(.rename, "Rename", std.fs.path.basename(p), p);
+            wb.prompt.hint(fs.relative(wb.root, p));
+        },
         .trash => |p| wb.ask(.trash, p, c.print("Delete “{s}”?", .{std.fs.path.basename(p)}), "It goes to the Recycle Bin.", &.{ "Cancel", "Delete" }),
         .open_changes => |p| wbgit.openChangesTab(wb, p, true),
         .open_terminal => |dir| newTerminalAt(wb, dir),
@@ -217,7 +220,10 @@ pub fn openPath(wb: *Workbench, path: []const u8, preview: bool) void {
 pub fn askNewFile(wb: *Workbench, dir: []const u8, folder: bool) void {
     wb.sidebar_open = true;
     wb.side = .explorer;
-    wb.prompt.ask(if (folder) .new_folder else .new_file, if (folder) "A new folder's name" else "A new file's name (a/b.txt makes its folders)", "", dir);
+    wb.prompt.ask(if (folder) .new_folder else .new_file, if (folder) "New Folder" else "New File", "", dir);
+    const rel = fs.relative(wb.root, dir);
+    var buf: [300]u8 = undefined;
+    wb.prompt.hint(std.fmt.bufPrint(&buf, "in {s}", .{if (rel.ptr == dir.ptr) std.fs.path.basename(dir) else rel}) catch "");
 }
 
 pub fn askComment(wb: *Workbench, d: *Doc) void {
