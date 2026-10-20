@@ -206,5 +206,6 @@ pub fn named(name: []const u8) ?Icon {
         .{ "unfold", .unfold },
     };
     for (map) |e| if (@import("std").mem.eql(u8, e[0], name)) return e[1];
-    return null;
+    // Else the Go app's own name, as `replace_all`.
+    return @import("std").meta.stringToEnum(Icon, name);
 }

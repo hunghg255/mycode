@@ -66,6 +66,9 @@ needs a `## <version>` section here, or its build fails.
 - The Zig build's Explorer follows the tab shown, opening the folders above its file and choosing it, colors files
   with unsaved changes as the tabs do and the files not shown a little quieter, copies files dropped from File
   Explorer into the folder they land on, and orders its menu as the Go app's.
+- The Zig build's find widget is the Go app's: over the top right of the editor, with the arrow that shows
+  **Replace**, the **Match Case**, **Match Whole Word** and **Use Regular Expression** toggles inside the field, the
+  count of matches ("3 of 12", **No results** in red), icon buttons with tooltips, and **Replace** and **Replace All**.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

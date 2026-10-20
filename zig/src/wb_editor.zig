@@ -332,6 +332,7 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
     if (d.rendered and viewer.isSvg(d.path)) return viewer.svgPreview(c, d);
     d.editor.wrap = d.own_wrap orelse s.wordWrap;
     d.editor.background = .hex(sh.palette.editor);
+    d.editor.own_find_bar = true;
     d.editor.syntax.colors = themes.syntax(sh.palette);
     d.editor.guides = c.theme.text.alpha(if (sh.palette.dark) 0.08 else 0.1);
     d.editor.whitespace = c.theme.muted.alpha(0.6);
@@ -364,6 +365,7 @@ fn stickyAndEditor(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) vo
             const at: ui.Rect = .{ .x = er.x - br.x, .y = er.y - br.y, .w = er.w, .h = er.h };
             @import("ruler.zig").view(c, d, at, wb.shell.palette);
             conflictButtons(wb, c, d, at, tops, row_h);
+            @import("findwidget.zig").view(c, d, at, .hex(wb.shell.palette.editor));
         };
         box.end();
     }

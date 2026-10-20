@@ -47,6 +47,6 @@ out += ['    };', '}', '', '/// The icon of a name the app calls it by (myzig\'s
         'pub fn named(name: []const u8) ?Icon {', '    const map = [_]struct { []const u8, Icon }{']
 for k, v in names.items():
     out.append('        .{ "%s", .%s },' % (k, snake(v)))
-out += ['    };', '    for (map) |e| if (@import("std").mem.eql(u8, e[0], name)) return e[1];', '    return null;', '}', '']
+out += ['    };', '    for (map) |e| if (@import("std").mem.eql(u8, e[0], name)) return e[1];', "    // Else the Go app's own name, as `replace_all`.", '    return @import("std").meta.stringToEnum(Icon, name);', '}', '']
 open(os.path.join(here, '..', 'src', 'lucide.zig'), 'w', encoding='utf-8', newline='\n').write('\n'.join(out))
 print(len(icons), 'icons')
