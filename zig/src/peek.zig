@@ -37,34 +37,58 @@ pub fn view(c: *ui.Context, d: *Doc, line: usize, size: f32, leading: f32, x: f3
     if (y + rows_old * row_h > room) y = (@as(f32, @floatFromInt(h.b0)) - @as(f32, @floatFromInt(d.first_line))) * row_h - rows_old * row_h - 6;
     y = std.math.clamp(y, 0, @max(room - rows_old * row_h, 0));
     var act: Action = .none;
-    const box = ui.div(c).column().absolute().offset(x, y).w(@max(c.size.w * 0.45, 360)).bg(t.surface).border(t.border).rounded(6).shadowMd().clip();
+    const box = ui.div(c).column().absolute().offset(x, y).w(@max(c.size.w * 0.55, 380)).bg(t.surface).border(t.border).rounded(6).shadowMd().clip();
     defer box.end();
     {
-        const bar = ui.div(c).row().wFull().h(28).px(8).gap(6).itemsCenter().bg(t.surface_hover);
+        // As the Go app's: what the change is and which of them, and its buttons.
+        const bar = ui.div(c).row().wFull().h(26).pl(10).pr(4).gap(2).itemsCenter();
         defer bar.end();
-        ui.text(c, if (h.a0 == h.a1) "Added lines" else if (h.b0 == h.b1) c.print("{d} lines removed", .{h.a1 - h.a0}) else "Changed lines", .{ .size = 12, .weight = .semibold });
-        ui.text(c, "as HEAD has them", .{ .size = 11, .color = t.muted });
-        ui.spacer(c);
-        if (ui.button(c, "↑", .{ .variant = .ghost, .size = 11 }).clicked) act = .prev;
-        if (ui.button(c, "↓", .{ .variant = .ghost, .size = 11 }).clicked) act = .next;
-        if (ui.button(c, "Revert", .{ .variant = .ghost, .size = 11 }).clicked) act = .revert;
-        if (ui.button(c, "Stage", .{ .variant = .ghost, .size = 11 }).clicked) act = .stage;
-        if (ui.button(c, "×", .{ .variant = .ghost, .size = 11 }).clicked) act = .close;
+        const what = if (h.a0 == h.a1) "Added" else if (h.b0 == h.b1) "Removed" else "Changed";
+        var k: usize = 0;
+        var total: usize = 0;
+        if (d.base) |b| if (hunks.hunksOf(c.alloc(), b, d.editor.area.text(c.alloc()))) |hs| {
+            total = hs.len;
+            for (hs, 0..) |o, i| if (o.b0 == h.b0 and o.a0 == h.a0) {
+                k = i;
+            };
+        } else |_| {};
+        const words = ui.div(c).grow().w(0).clip();
+        ui.text(c, c.print("{s} · change {d} of {d} since HEAD", .{ what, k + 1, total }), .{ .size = 11.5, .color = t.muted });
+        words.end();
+        if (iconButton(c, "plus", "Stage Change")) act = .stage;
+        if (iconButton(c, "arrow.uturn.backward", "Revert Change")) act = .revert;
+        if (iconButton(c, "arrow.up", "Previous Change (Shift+Alt+F5)")) act = .prev;
+        if (iconButton(c, "arrow.down", "Next Change (Alt+F5)")) act = .next;
+        if (iconButton(c, "xmark", "Close (Esc)")) act = .close;
     }
+    _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = t.border }, .none, null);
+    // HEAD's lines, a dozen at most.
     const n = @min(h.a1, old.len) -| h.a0;
-    if (n == 0) {
-        ui.row(c, .{ .padding = .xy(10, 6) });
-        ui.text(c, "Nothing was here at HEAD.", .{ .size = 12, .color = t.muted });
+    if (n > 0) {
+        ui.column(c, .{ .width = .fill, .padding = .xy(0, 3), .background = t.danger.alpha(0.10) });
+        for (old[h.a0..@min(h.a1, old.len)][0..@min(n, 12)]) |l| {
+            ui.row(c, .{ .width = .fill, .padding = .xy(10, 0) });
+            ui.text(c, if (l.len > 0) l else " ", .{ .size = size, .mono = true, .leading = leading });
+            ui.end(c);
+        }
+        if (n > 12) {
+            ui.row(c, .{ .width = .fill, .padding = .xy(10, 2) });
+            ui.text(c, c.print("{d} more lines", .{n - 12}), .{ .size = 11, .color = t.muted });
+            ui.end(c);
+        }
         ui.end(c);
     }
-    for (old[h.a0..@min(h.a1, old.len)][0..@min(n, 30)]) |l| {
-        ui.row(c, .{ .width = .fill, .padding = .xy(10, 0), .background = t.danger.alpha(0.12) });
-        ui.text(c, if (l.len > 0) l else " ", .{ .size = size, .mono = true, .leading = leading });
-        ui.end(c);
-    }
-    if (n > 30) ui.text(c, c.print("  … {d} more", .{n - 30}), .{ .size = 11, .color = t.muted });
     if (c.shortcut(.{ .key = ui.Shortcut.escape })) act = .close;
     return act;
+}
+
+fn iconButton(c: *ui.Context, icon: []const u8, tip: []const u8) bool {
+    const b = ui.div(c).w(22).h(20).center().rounded(4).hover(c.theme.surface_hover);
+    @import("icons.zig").sym(c, icon, .{ .size = 10, .color = if (b.hovered()) c.theme.text else c.theme.muted });
+    const bi = b.interaction();
+    b.end();
+    ui.tooltip(c, bi, tip);
+    return bi.clicked;
 }
 
 /// Reverts the change at a line: its lines back to HEAD's, as a step of undo.

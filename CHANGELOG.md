@@ -119,6 +119,9 @@ needs a `## <version>` section here, or its build fails.
   found in the files to include and exclude", **Toggle Search Details** with labeled fields, what the view does and
   its keys before a query, **Refresh**, **Collapse All** and **Clear Search Results** beside its title, and "Replaced
   4 occurrences in 2 files" once replaced.
+- The Zig build's box of a change from the gutter is the Go app's: "Changed · change 2 of 5 since HEAD", icon
+  buttons with tooltips to stage, revert, go to the previous or next change and close, and HEAD's lines below, a
+  dozen at most.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.
