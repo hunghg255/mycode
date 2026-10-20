@@ -167,7 +167,9 @@ pub fn view(c: *ui.Context, d: *Doc, width_setting: f32, pal: *const themes.Pale
     defer box.end();
     const id = d.editor.area.scroll_id;
     const scroll = c.scroll.get(id) orelse 0;
-    const end = c.scroll_max.get(id) orelse 0;
+    // How far the editor scrolls, from its last layout (`scroll_max` is
+    // kept only for boxes that follow their end).
+    const end = c.scroll_limit.get(id) orelse 0;
     var g: Geo = .of(d.editor.area.doc.lineCount(), scroll, end, m.height);
     const hovered = box.hovered();
     const pa: *Paint = c.alloc().create(Paint) catch return null;

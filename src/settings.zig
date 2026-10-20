@@ -32,7 +32,12 @@ pub const Settings = struct {
     projectTabs: bool = true,
     projectIcons: bool = false,
     autoSave: bool = true,
+    /// `true` or VS Code's "on" wrap at the edge; "wordWrapColumn" and
+    /// "bounded" at `wordWrapColumn`, or the edge where that is nearer.
     wordWrap: bool = false,
+    wordWrapColumn: f32 = 80,
+    /// Made of `wordWrap`: lines wrap at `wordWrapColumn`.
+    wrapAtColumn: bool = false,
     blame: bool = true,
     minimap: bool = true,
     minimapWidth: f32 = 90,
@@ -179,6 +184,23 @@ pub fn parse(a: std.mem.Allocator, v: std.json.Value) Settings {
     s.lineHeight = std.math.clamp(s.lineHeight, 1, 3);
     if (s.terminalFontSize != 0) s.terminalFontSize = std.math.clamp(s.terminalFontSize, 9, 28);
     s.minimapWidth = std.math.clamp(s.minimapWidth, 40, 400);
+    // Word wrap as VS Code writes it too: a string, and its `editor.` keys.
+    for ([_][]const u8{ "wordWrap", "editor.wordWrap" }) |k| if (o.get(k)) |x| switch (x) {
+        .bool => |b| {
+            s.wordWrap = b;
+            s.wrapAtColumn = false;
+        },
+        .string => |str| {
+            s.wordWrap = !std.mem.eql(u8, str, "off");
+            s.wrapAtColumn = std.mem.eql(u8, str, "wordWrapColumn") or std.mem.eql(u8, str, "bounded");
+        },
+        else => {},
+    };
+    if (o.get("editor.wordWrapColumn")) |x| if (num(x)) |n| {
+        s.wordWrapColumn = n;
+    };
+    s.wordWrapColumn = std.math.clamp(s.wordWrapColumn, 10, 1000);
+    s.wrapAtColumn = s.wrapAtColumn and s.wordWrap;
     if (std.mem.trim(u8, s.fontFamily, " ").len == 0) s.fontFamily = "monospace";
     // Themes used to be appearances.
     if (std.mem.eql(u8, s.appearance, "matrix") or std.mem.eql(u8, s.appearance, "claude")) {
@@ -230,4 +252,20 @@ test parse {
     try std.testing.expectEqualStrings("matrix", s.theme);
     try std.testing.expectEqual(@as(usize, 1), s.filesExclude.len);
     try std.testing.expectEqualStrings("-l", s.terminalProfiles[0].args[0]);
+    try std.testing.expect(!s.wordWrap);
+    // Word wrap in VS Code's words.
+    const w = parse(a, try std.json.parseFromSliceLeaky(std.json.Value, a,
+        \\{"editor.wordWrap": "bounded", "editor.wordWrapColumn": 100}
+    , .{}));
+    try std.testing.expect(w.wordWrap and w.wrapAtColumn);
+    try std.testing.expectEqual(@as(f32, 100), w.wordWrapColumn);
+    const on = parse(a, try std.json.parseFromSliceLeaky(std.json.Value, a,
+        \\{"wordWrap": "on"}
+    , .{}));
+    try std.testing.expect(on.wordWrap and !on.wrapAtColumn);
+    const off = parse(a, try std.json.parseFromSliceLeaky(std.json.Value, a,
+        \\{"wordWrap": "off", "wordWrapColumn": 60}
+    , .{}));
+    try std.testing.expect(!off.wordWrap and !off.wrapAtColumn);
+    try std.testing.expectEqual(@as(f32, 60), off.wordWrapColumn);
 }

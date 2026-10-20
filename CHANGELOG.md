@@ -5,6 +5,12 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- The minimap's slider follows the editor as it scrolls, its size the lines in view: it read a scroll length the
+  editor never sets, so it sat in the wrong place, as tall as the file, and jumped as the editor scrolled.
+- `wordWrap` takes VS Code's values too: `"on"`, `"off"`, and `"wordWrapColumn"` or `"bounded"` to wrap at
+  `wordWrapColumn` characters (80 by default), or at the edge where the editor is narrower. VS Code's
+  `editor.wordWrap` and `editor.wordWrapColumn` keys work as well.
+
 - **Split Right**, **Move to Next Column**, **Move to Panel** and **Close** in a terminal tab's menu no longer quit
   the app: they emptied its column while the tab strip still drew it.
 

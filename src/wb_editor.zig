@@ -333,6 +333,7 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
     }
     if (d.rendered and viewer.isSvg(d.path)) return viewer.svgPreview(c, d);
     d.editor.wrap = d.own_wrap orelse s.wordWrap;
+    d.editor.wrap_column = if (s.wrapAtColumn) @intFromFloat(s.wordWrapColumn) else 0;
     d.editor.background = .hex(sh.palette.editor);
     d.editor.own_find_bar = true;
     d.editor.syntax.colors = themes.syntax(sh.palette);

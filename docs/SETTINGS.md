@@ -57,7 +57,8 @@ takes its default.
 | `projectTabs`          | `false`       | `true`, `false`                                             | **View → Project Tabs**                        |
 | `projectIcons`         | `false`       | `true`, `false`                                             | **View → Project Icons**                       |
 | `autoSave`             | `true`        | `true`, `false`                                             | **File → Auto Save**                           |
-| `wordWrap`             | `false`       | `true`, `false`                                             | **View → Word Wrap**                           |
+| `wordWrap`             | `false`       | `true`, `false`, `"off"`, `"on"`, `"wordWrapColumn"`, `"bounded"` | **View → Word Wrap**                     |
+| `wordWrapColumn`       | `80`          | a number of characters, 10 to 1000                          | Only this file                                 |
 | `blame`                | `true`        | `true`, `false`                                             | **Git → Inline Blame**                         |
 | `minimap`              | `true`        | `true`, `false`                                             | **View → Minimap**                             |
 | `minimapWidth`         | `90`          | 40 to 400                                                   | Dragging the minimap's left edge               |
@@ -113,7 +114,9 @@ differ in width lines them up only roughly.
   its initials. A project without one keeps its initials.
 - **`autoSave`** saves a changed file a moment after you stop typing, and when you leave it.
 - **`wordWrap`** wraps long lines at the edge of the editor. **⌥Z** wraps or unwraps one tab only, until this
-  setting changes.
+  setting changes. As in VS Code, it also takes `"on"` and `"off"`, and `"wordWrapColumn"` or `"bounded"` to wrap at
+  **`wordWrapColumn`** characters, or at the edge where the editor is narrower. VS Code's `editor.wordWrap` and
+  `editor.wordWrapColumn` keys work too. **View → Word Wrap** turns wrapping on at the edge, or off.
 - **`blame`** shows who last changed the caret's line, and when, at the end of the line.
 - **`minimap`** shows the whole file, small, along the right of each editor, and **`minimapWidth`** is how wide it
   is, in points.
