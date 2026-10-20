@@ -553,7 +553,7 @@ pub const DiffList = struct {
         var ev: Event = .none;
         const e = &dl.entries.items[ei];
         const row = ui.div(c).row().wFull().h(row_h).px(8).gap(6).itemsCenter().bg(chrome).hover(t.surface_hover);
-        ui.icon(c, if (e.folded) "chevron.right" else "chevron.down", .{ .size = 9, .color = t.muted });
+        icons.sym(c, if (e.folded) "chevron.right" else "chevron.down", .{ .size = 9, .color = t.muted });
         icons.file(c, std.fs.path.basename(e.path));
         if (std.fs.path.dirnamePosix(e.path)) |d| ui.text(c, c.print("{s}/", .{d}), .{ .size = 12, .color = t.muted });
         ui.text(c, std.fs.path.basenamePosix(e.path), .{ .size = 12, .weight = .semibold });

@@ -407,24 +407,40 @@ pub const Workbench = struct {
                 .{ .label = "SEARCH", .icon = "magnifyingglass", .side = .search },
                 .{ .label = "SOURCE CONTROL", .icon = "arrow.triangle.branch", .side = .scm },
             };
+            // The views' buttons, the one shown filled, then its name, as
+            // the Go app heads its sidebar; source control's counts its changes.
             for (views) |v| {
                 const on = wb.side == v.side;
-                const b = ui.div(c).row().h(24).px(6).gap(5).itemsCenter().rounded(4).hover(t.surface_hover);
-                ui.icon(c, v.icon, .{ .size = 12, .color = if (on) t.text else t.muted });
-                if (on) ui.text(c, v.label, .{ .size = 11, .weight = .semibold, .color = t.text });
-                if (v.side == .scm and wb.scm.changes.len > 0)
-                    ui.text(c, c.print("{d}", .{wb.scm.changes.len}), .{ .size = 10, .color = t.accent });
-                if (b.clicked()) run_mod.run(wb, c, switch (v.side) {
+                const b = ui.div(c).w(26).h(24).center().rounded(5).bg(if (on) t.surface_hover else .transparent).hover(t.surface_hover);
+                icons.sym(c, v.icon, .{ .size = 11.5, .color = if (on or b.hovered()) t.text else t.muted });
+                if (v.side == .scm and wb.scm.changes.len > 0) {
+                    const n = wb.scm.changes.len;
+                    const label = if (n > 99) "99+" else c.print("{d}", .{n});
+                    const badge = ui.div(c).absolute().offset(14, 0).h(12).px(3).center().rounded(6).bg(t.accent);
+                    ui.text(c, label, .{ .size = 8, .weight = .bold, .color = t.accent_text });
+                    badge.end();
+                }
+                const bi = b.interaction();
+                b.end();
+                ui.tooltip(c, bi, switch (v.side) {
+                    .explorer => "Explorer (Ctrl+Shift+E)",
+                    .search => "Search (Ctrl+Shift+F)",
+                    .scm => "Source Control (Ctrl+Shift+G)",
+                });
+                if (bi.clicked) run_mod.run(wb, c, switch (v.side) {
                     .explorer => .show_explorer,
                     .search => .show_search,
                     .scm => .show_scm,
                 });
-                b.end();
             }
+            for (views) |v| if (v.side == wb.side) {
+                _ = c.leaf(.{ .width = .{ .px = 6 } }, .none, null);
+                ui.text(c, v.label, .{ .size = 11, .weight = .semibold, .color = t.muted });
+            };
             ui.spacer(c);
             if (wb.side == .explorer and head.hovered()) {
                 if (panel_mod.smallButton(c, "plus.square", false)) wbfiles.askNewFile(wb, wb.explorer.targetDir(), false);
-                if (panel_mod.smallButton(c, "folder", false)) wbfiles.askNewFile(wb, wb.explorer.targetDir(), true);
+                if (panel_mod.smallButton(c, "folder.badge.plus", false)) wbfiles.askNewFile(wb, wb.explorer.targetDir(), true);
                 if (panel_mod.smallButton(c, "arrow.clockwise", false)) run_mod.run(wb, c, .refresh_explorer);
                 if (panel_mod.smallButton(c, "rectangle.on.rectangle", false)) run_mod.run(wb, c, .collapse_folders);
             }

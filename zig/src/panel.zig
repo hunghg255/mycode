@@ -4,6 +4,7 @@
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
+const icons = @import("icons.zig");
 const terminal = @import("terminal");
 const Profile = @import("termprofiles.zig").Profile;
 
@@ -232,7 +233,7 @@ pub const Panel = struct {
     /// Where it was drawn last: tabs of terminals dropped there come in.
     rect: ?ui.Rect = null,
 
-    pub const Request = union(enum) { new: ?usize, to_column: *Term, set_default: usize };
+    pub const Request = union(enum) { new: ?usize, to_column: *Term, to_editor: *Term, kill: *Term, set_default: usize };
 
     pub fn deinit(p: *Panel) void {
         for (p.terms.items) |t| t.destroy();
@@ -287,10 +288,10 @@ pub const Panel = struct {
                 c.keyed(term);
                 const on = k == p.active;
                 const chip = ui.div(c).row().h(22).px(8).gap(6).itemsCenter().rounded(4).bg(if (on) t.surface_hover else .transparent).hover(t.surface_hover);
-                ui.icon(c, "terminal", .{ .size = 11, .color = if (term.bell) t.accent else t.muted });
+                icons.sym(c, "terminal", .{ .size = 11, .color = if (term.bell) t.accent else t.muted });
                 ui.text(c, c.print("{d}: {s}", .{ k + 1, term.name() }), .{ .size = 12, .color = if (on) t.text else t.muted });
                 const x = ui.div(c).w(14).h(14).center().rounded(3).hover(t.surface);
-                ui.icon(c, "xmark", .{ .size = 8, .color = t.muted });
+                icons.sym(c, "xmark", .{ .size = 8, .color = t.muted });
                 if (x.clicked()) close_at = k;
                 x.end();
                 const ci = chip.interaction();
@@ -311,16 +312,15 @@ pub const Panel = struct {
                 p.take(k).destroy();
                 c.changed = true;
             }
-            if (p.terms.items.len >= 2) {
-                if (smallButton(c, "chevron.up", false)) p.cycle(false);
-                if (smallButton(c, "chevron.down", false)) p.cycle(true);
-            }
             ui.spacer(c);
-            if (smallButton(c, "plus", false)) p.request = .{ .new = null };
-            const more = ui.div(c).w(22).h(22).center().rounded(4).hover(t.surface_hover);
-            ui.icon(c, "chevron.down", .{ .size = 10, .color = t.muted });
+            // As the Go app's: a new terminal, its profiles, to the editor
+            // area, killed, the panel maximized, and closed.
+            if (tipButton(c, "plus", "New Terminal (Ctrl+Shift+`)")) p.request = .{ .new = null };
+            const more = ui.div(c).w(26).h(24).center().rounded(5).hover(t.surface_hover);
+            icons.sym(c, "chevron.down", .{ .size = 11, .color = t.muted });
             const mi = more.interaction();
             more.end();
+            ui.tooltip(c, mi, "Launch Profile…");
             if (ui.buttonMenu(c, &p.profile_menu, mi)) |m| {
                 defer m.end();
                 for (profiles, 0..) |pr, k| if (m.item(c.print("New {s}", .{pr.name}), .{})) {
@@ -334,8 +334,12 @@ pub const Panel = struct {
                     };
                 }
             }
-            if (smallButton(c, if (p.maximized) "chevron.down" else "chevron.up", false)) p.maximized = !p.maximized;
-            if (smallButton(c, "xmark", false)) {
+            if (p.current()) |term| {
+                if (tipButton(c, "arrow.up.right", "Move Terminal to Editor Area")) p.request = .{ .to_editor = term };
+                if (tipButton(c, "trash", "Kill Terminal")) p.request = .{ .kill = term };
+            }
+            if (tipButton(c, if (p.maximized) "arrow.down.right.and.arrow.up.left" else "arrow.up.left.and.arrow.down.right", if (p.maximized) "Restore Panel Size" else "Maximize Panel")) p.maximized = !p.maximized;
+            if (tipButton(c, "xmark", "Close Panel")) {
                 p.open = false;
                 p.maximized = false;
             }
@@ -348,9 +352,19 @@ pub const Panel = struct {
     }
 };
 
+/// A button of the panel's bar, as the Go app's: 26 by 24, its tip the label.
+fn tipButton(c: *ui.Context, icon: []const u8, tip: []const u8) bool {
+    const b = ui.div(c).w(26).h(24).center().rounded(5).hover(c.theme.surface_hover);
+    icons.sym(c, icon, .{ .size = 11.5, .color = if (b.hovered()) c.theme.text else c.theme.muted });
+    const bi = b.interaction();
+    b.end();
+    ui.tooltip(c, bi, tip);
+    return bi.clicked;
+}
+
 pub fn smallButton(c: *ui.Context, icon: []const u8, on: bool) bool {
     const b = ui.div(c).w(22).h(22).center().rounded(4).bg(if (on) c.theme.surface_hover else .transparent).hover(c.theme.surface_hover);
-    ui.icon(c, icon, .{ .size = 11, .color = if (on) c.theme.text else c.theme.muted });
+    icons.sym(c, icon, .{ .size = 11, .color = if (on) c.theme.text else c.theme.muted });
     const clicked = b.clicked();
     b.end();
     return clicked;

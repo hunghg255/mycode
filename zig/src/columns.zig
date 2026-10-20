@@ -495,15 +495,15 @@ pub const Editors = struct {
             switch (it.body) {
                 .file => |d| icons.file(c, d.name()),
                 .image => |im| icons.file(c, std.fs.path.basename(im.path)),
-                .changes, .commit => ui.icon(c, "arrow.triangle.branch", .{ .size = 11, .frame = 14, .color = t.muted }),
-                .terminal => ui.icon(c, "terminal", .{ .size = 11, .frame = 14, .color = t.muted }),
+                .changes, .commit => icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .frame = 14, .color = t.muted }),
+                .terminal => icons.sym(c, "terminal", .{ .size = 11, .frame = 14, .color = t.muted }),
             }
             ui.text(c, it.title(c), .{ .size = 13, .italic = it.preview, .color = if (on) t.text else t.muted });
             const x = ui.div(c).w(16).h(16).center().rounded(4).hover(t.surface_hover);
             if (it.dirty() and !cell.hovered()) {
                 _ = c.leaf(.{ .width = .{ .px = 7 }, .height = .{ .px = 7 }, .radius = 4, .background = t.text }, .none, null);
             } else if (cell.hovered() or on) {
-                ui.icon(c, "xmark", .{ .size = 9, .color = t.muted });
+                icons.sym(c, "xmark", .{ .size = 9, .color = t.muted });
             }
             const x_clicked = x.clicked();
             x.end();
@@ -529,7 +529,7 @@ pub const Editors = struct {
         ui.spacer(c);
         if (col.locked) {
             const lk = ui.div(c).row().h(34).px(8).gap(4).itemsCenter().hover(t.surface_hover);
-            ui.icon(c, "hand.raised", .{ .size = 11, .color = t.muted });
+            icons.sym(c, "hand.raised", .{ .size = 11, .color = t.muted });
             ui.text(c, "Locked", .{ .size = 11, .color = t.muted });
             if (lk.clicked()) col.locked = false;
             lk.end();

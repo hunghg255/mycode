@@ -5,6 +5,7 @@
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
+const icons = @import("icons.zig");
 const git = @import("git.zig");
 const quickopen = @import("quickopen.zig");
 
@@ -109,14 +110,14 @@ pub const Picker = struct {
             const on = i == p.selected;
             const row = ui.div(c).row().wFull().h(28).px(8).gap(8).itemsCenter().rounded(4).bg(if (on) t.accent.alpha(0.25) else .transparent).hover(t.surface_hover);
             if (creating and i == 0) {
-                ui.icon(c, "plus", .{ .size = 12, .color = t.muted });
+                icons.sym(c, "plus", .{ .size = 12, .color = t.muted });
                 ui.text(c, c.print("Create branch “{s}”", .{q}), .{ .size = 13 });
             } else {
                 const k = p.shown.items[i - @intFromBool(creating)];
                 switch (p.mode) {
                     .switch_branch, .delete_branch => {
                         const b = p.branches[k];
-                        ui.icon(c, if (b.remote) "globe" else "arrow.triangle.branch", .{ .size = 12, .color = t.muted });
+                        icons.sym(c, if (b.remote) "globe" else "arrow.triangle.branch", .{ .size = 12, .color = t.muted });
                         ui.text(c, b.name, .{ .size = 13, .weight = if (b.head) .semibold else .regular });
                         if (b.head) ui.text(c, "current", .{ .size = 11, .color = t.accent });
                         ui.text(c, b.subject, .{ .size = 11, .color = t.muted });

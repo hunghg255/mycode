@@ -3,6 +3,7 @@
 //! Lucide's in a color for each language (`iconTheme: "lucide"`, and
 //! always under The Matrix).
 const std = @import("std");
+const go_icons = @import("lucide.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const material = @import("material");
@@ -104,6 +105,18 @@ fn drawSvg(c: *ui.Context, key: []const u8, bytes: []const u8, color: ?ui.Color,
     defer box.end();
     // Keys of their own: myzig's line icons are cached by name too.
     _ = ui.svg(c, bytes, .{ .width = size, .height = size, .color = color, .key = c.print("mycode-icon:{s}", .{key}) });
+}
+
+/// An icon by the name myzig gives it ("xmark", "chevron.down"), drawn
+/// as the Go app draws it, from Lucide (`lucide.zig`), a little larger
+/// than myzig's line icons of the same size, as the Go app sizes them;
+/// myzig's own for a name without one.
+pub fn sym(c: *ui.Context, name: []const u8, opts: ui.IconOptions) void {
+    const i = go_icons.named(name) orelse return ui.icon(c, name, opts);
+    const size = @round(opts.size * 1.3);
+    const box = ui.div(c).w(opts.frame orelse size).h(opts.frame orelse size).center();
+    defer box.end();
+    _ = ui.svg(c, go_icons.svg(i), .{ .width = size, .height = size, .color = opts.color orelse c.theme.text, .key = c.print("lucide:{s}", .{@tagName(i)}) });
 }
 
 /// The title bar's glyphs, Lucide's as the Go app has them.

@@ -454,7 +454,7 @@ pub const Search = struct {
             defer ui.end(c);
             ui.row(c, .{ .width = .fill, .gap = 4, .align_items = .center });
             const arrow = ui.div(c).w(16).h(24).center().rounded(3).hover(t.surface_hover);
-            ui.icon(c, if (s.show_replace) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
+            icons.sym(c, if (s.show_replace) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
             if (arrow.clicked()) s.show_replace = !s.show_replace;
             arrow.end();
             const qid = c.peekId(null);
@@ -507,14 +507,14 @@ pub const Search = struct {
             for (s.results.items, 0..) |*r, fi| {
                 if (k == 0) {
                     const head = ui.div(c).row().wFull().h(22).px(8).gap(6).itemsCenter().hover(t.surface_hover);
-                    ui.icon(c, if (r.open) "chevron.down" else "chevron.right", .{ .size = 8, .color = t.muted });
+                    icons.sym(c, if (r.open) "chevron.down" else "chevron.right", .{ .size = 8, .color = t.muted });
                     icons.file(c, std.fs.path.basename(r.path));
                     ui.text(c, std.fs.path.basename(r.path), .{ .size = 12 });
                     if (std.fs.path.dirname(r.path)) |d| ui.text(c, d, .{ .size = 11, .color = t.muted });
                     ui.spacer(c);
                     if (s.show_replace and head.hovered()) {
                         const b = ui.div(c).w(18).h(18).center().rounded(3).hover(t.surface);
-                        ui.icon(c, "arrow.clockwise", .{ .size = 9, .color = t.muted });
+                        icons.sym(c, "arrow.clockwise", .{ .size = 9, .color = t.muted });
                         if (b.clicked()) ev = .{ .replace_file = fi };
                         b.end();
                     }
@@ -553,7 +553,7 @@ pub const Search = struct {
                     texts.end();
                     if (s.show_replace and row.hovered()) {
                         const b = ui.div(c).w(18).h(18).center().rounded(3).hover(t.surface);
-                        ui.icon(c, "arrow.clockwise", .{ .size = 9, .color = t.muted });
+                        icons.sym(c, "arrow.clockwise", .{ .size = 9, .color = t.muted });
                         if (b.clicked()) ev = .{ .replace_match = .{ .file = fi, .match = k } };
                         b.end();
                     } else {

@@ -5,6 +5,7 @@ const std = @import("std");
 const tabdrag = @import("tabdrag.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
+const icons = @import("icons.zig");
 const fs = @import("fs.zig");
 const Workbench = @import("workbench.zig").Workbench;
 const explorer_mod = @import("explorer.zig");
@@ -89,7 +90,7 @@ pub fn panelDragFrame(wb: *Workbench, c: *ui.Context) void {
             c.wants_moves = true;
             if (tabdrag.at(ed, m)) |t| tabdrag.marker(c, ed, t);
             const ghost = ui.div(c).row().absolute().offset(m.x + 10, m.y + 8).px(8).py(4).gap(6).itemsCenter().rounded(4).bg(c.theme.surface_hover).border(c.theme.border);
-            ui.icon(c, "terminal", .{ .size = 11, .color = c.theme.muted });
+            icons.sym(c, "terminal", .{ .size = 11, .color = c.theme.muted });
             ui.text(c, dg.term.name(), .{ .size = 12 });
             ghost.end();
         }
@@ -502,6 +503,14 @@ pub fn panelRequest(wb: *Workbench, req: panel_mod.Panel.Request) void {
             toLockedColumn(wb, t);
         },
         .set_default => |i| wb.shell.setDefaultProfile(i),
+        .to_editor => |t| if (std.mem.indexOfScalar(*Term, wb.panel.terms.items, t)) |i| {
+            wb.panel.active = i;
+            moveTerminal(wb);
+        },
+        .kill => |t| if (std.mem.indexOfScalar(*Term, wb.panel.terms.items, t)) |i| {
+            wb.panel.take(i).destroy();
+            if (wb.panel.current()) |n| n.focus = true;
+        },
     }
 }
 

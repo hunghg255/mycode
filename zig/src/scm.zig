@@ -247,7 +247,7 @@ pub const Scm = struct {
         defer bar.end();
         const box = ui.div(c).row().wFull().gap(6).itemsCenter().pl(8).pr(4).py(4).rounded(5).bg(tint.alpha(0.12));
         defer box.end();
-        ui.icon(c, "arrow.triangle.branch", .{ .size = 11, .color = tint });
+        icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .color = tint });
         const label = if (conflicts > 0)
             c.print("{s} in progress · {d} conflict{s}", .{ s.op.title(), conflicts, if (conflicts == 1) "" else "s" })
         else
@@ -299,7 +299,7 @@ pub const Scm = struct {
             const bar = ui.div(c).row().wFull().h(28).px(10).gap(4).itemsCenter();
             defer bar.end();
             const b = ui.div(c).row().h(22).px(4).gap(4).itemsCenter().rounded(4).hover(t.surface_hover);
-            ui.icon(c, "arrow.triangle.branch", .{ .size = 11, .color = t.muted });
+            icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .color = t.muted });
             ui.text(c, s.branch orelse "(no branch)", .{ .size = 12 });
             if (b.clicked()) ev = .{ .run = .git_switch_branch };
             b.end();
@@ -353,7 +353,7 @@ pub const Scm = struct {
         if (s.amending) {
             const bar = ui.div(c).row().wFull().px(10).py(2);
             const box = ui.div(c).row().wFull().gap(6).itemsCenter().pl(8).pr(4).py(4).rounded(5).bg(t.accent.alpha(0.12));
-            ui.icon(c, "pencil", .{ .size = 11, .color = t.accent });
+            icons.sym(c, "pencil", .{ .size = 11, .color = t.accent });
             ui.text(c, "Amending last commit", .{ .size = 11.5 });
             ui.spacer(c);
             if (ui.button(c, "Cancel", .{ .variant = .ghost, .size = 11 }).clicked) {
@@ -435,7 +435,7 @@ pub const Scm = struct {
                     .untracked => "Untracked",
                 };
                 const head = ui.div(c).row().wFull().h(24).px(8).gap(6).itemsCenter().hover(t.surface_hover);
-                ui.icon(c, if (s.open[gi]) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
+                icons.sym(c, if (s.open[gi]) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
                 ui.text(c, title, .{ .size = 11, .weight = .semibold, .color = t.muted });
                 ui.text(c, c.print("{d}", .{n}), .{ .size = 10, .color = t.muted });
                 ui.spacer(c);
@@ -476,12 +476,12 @@ pub const Scm = struct {
         // COMMITS.
         {
             const head = ui.div(c).row().wFull().h(24).px(8).gap(6).itemsCenter().hover(t.surface_hover);
-            ui.icon(c, if (s.commits_open) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
+            icons.sym(c, if (s.commits_open) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
             ui.text(c, "COMMITS", .{ .size = 11, .weight = .semibold, .color = t.muted });
             ui.spacer(c);
             var acted = false;
             const all_b = ui.div(c).w(20).h(20).center().rounded(3).hover(t.surface);
-            ui.icon(c, "arrow.triangle.branch", .{ .size = 10, .color = if (s.graph.all) t.accent else t.muted });
+            icons.sym(c, "arrow.triangle.branch", .{ .size = 10, .color = if (s.graph.all) t.accent else t.muted });
             if (all_b.clicked()) {
                 ev = .{ .run = .show_all_branches };
                 acted = true;
@@ -597,8 +597,8 @@ pub const Scm = struct {
             ui.keyed(c, .{ gi, std.hash.Wyhash.hash(1, nd.path) });
             const open = !s.closed[gi].contains(nd.path);
             const row = ui.div(c).row().wFull().h(22).pl(indent - 14).pr(6).gap(6).itemsCenter().hover(t.surface_hover);
-            ui.icon(c, if (open) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
-            ui.icon(c, "folder", .{ .size = 12, .color = t.muted });
+            icons.sym(c, if (open) "chevron.down" else "chevron.right", .{ .size = 9, .color = t.muted });
+            icons.sym(c, "folder", .{ .size = 12, .color = t.muted });
             ui.text(c, nd.name, .{ .size = 13 });
             ui.spacer(c);
             var acted = false;
@@ -707,9 +707,12 @@ pub const Scm = struct {
     }
 };
 
-fn rowButton(c: *ui.Context, icon: []const u8) bool {
-    const b = ui.div(c).w(18).h(18).center().rounded(3).hover(c.theme.surface);
-    ui.icon(c, icon, .{ .size = 10, .color = c.theme.muted });
+/// A row's button, as the Go app's small ones: 20 by 20; discarding is
+/// an arrow back.
+fn rowButton(c: *ui.Context, icon_name: []const u8) bool {
+    const icon = if (std.mem.eql(u8, icon_name, "arrow.clockwise")) "arrow.uturn.backward" else icon_name;
+    const b = ui.div(c).w(20).h(20).center().rounded(4).hover(c.theme.surface);
+    icons.sym(c, icon, .{ .size = 10, .color = if (b.hovered()) c.theme.text else c.theme.muted });
     const clicked = b.clicked();
     b.end();
     return clicked;

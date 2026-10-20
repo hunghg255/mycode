@@ -4,6 +4,7 @@
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
+const icons = @import("icons.zig");
 const git = @import("git.zig");
 
 pub const Commit = struct {
@@ -203,7 +204,7 @@ pub const Graph = struct {
             _ = c.leaf(.{ .absolute = true, .offset = .{ .x = x - sz / 2, .y = 12 - sz / 2 }, .width = .{ .px = sz }, .height = .{ .px = sz }, .radius = sz, .background = if (merge) t.surface else col, .border = if (cm.head or merge) col else null, .border_width = 2 }, .none, null);
             lb.end();
             ui.text(c, initials(c, cm.author), .{ .size = 10, .weight = .semibold, .color = t.muted });
-            if (cm.unpushed) ui.icon(c, "arrow.up", .{ .size = 9, .color = t.accent });
+            if (cm.unpushed) icons.sym(c, "arrow.up", .{ .size = 9, .color = t.accent });
             ui.text(c, cm.subject, .{ .size = 12 });
             if (cm.refs.len > 0) refBadges(c, cm.refs);
             ui.spacer(c);

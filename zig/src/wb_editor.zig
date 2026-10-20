@@ -299,13 +299,13 @@ fn fileBody(wb: *Workbench, c: *ui.Context, d: *Doc, chrome: ui.Color) void {
         var it = std.mem.tokenizeScalar(u8, rel, '/');
         var first = true;
         while (it.next()) |part| {
-            if (!first) ui.icon(c, "chevron.right", .{ .size = 8, .color = t.muted });
+            if (!first) icons.sym(c, "chevron.right", .{ .size = 8, .color = t.muted });
             first = false;
             ui.text(c, part, .{ .size = 12, .color = t.muted });
         }
         var buf: [8]symbols.Symbol = undefined;
         for (symbols.around(&buf, wb.syms, d.editor.area.caretLine())) |sy| {
-            ui.icon(c, "chevron.right", .{ .size = 8, .color = t.muted });
+            icons.sym(c, "chevron.right", .{ .size = 8, .color = t.muted });
             const b = ui.div(c).row().h(20).px(3).itemsCenter().rounded(3).hover(t.surface_hover);
             ui.text(c, sy.name, .{ .size = 12, .color = t.muted });
             if (b.clicked()) d.editor.goToLine(sy.line + 1);
@@ -580,7 +580,7 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
     wb.shell.mascot(c, 16);
     if (wb.scm.branch) |b| {
         const br = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
-        ui.icon(c, "arrow.triangle.branch", .{ .size = 11, .color = t.muted });
+        icons.sym(c, "arrow.triangle.branch", .{ .size = 11, .color = t.muted });
         ui.text(c, b, .{ .size = 12, .color = t.muted });
         if (wb.scm.ab.ahead > 0) ui.text(c, c.print("↑{d}", .{wb.scm.ab.ahead}), .{ .size = 11, .color = t.muted });
         if (wb.scm.ab.behind > 0) ui.text(c, c.print("↓{d}", .{wb.scm.ab.behind}), .{ .size = 11, .color = t.muted });
@@ -598,7 +598,7 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
     // The folder, as the Go app's status bar names it.
     {
         const fo = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
-        ui.icon(c, "folder", .{ .size = 11, .color = t.muted });
+        icons.sym(c, "folder", .{ .size = 11, .color = t.muted });
         ui.text(c, wb.name(), .{ .size = 12, .color = t.muted });
         const fi = fo.interaction();
         fo.end();
@@ -608,7 +608,7 @@ pub fn statusBar(wb: *Workbench, c: *ui.Context) void {
     if (wb.runner.busy) ui.text(c, "Git…", .{ .size = 11, .color = t.accent });
     if (wb.review.list.items.len > 0) {
         const rv = ui.div(c).row().h(20).px(4).gap(4).itemsCenter().rounded(3).hover(t.surface_hover);
-        ui.icon(c, "pencil", .{ .size = 11, .color = .hex(p.modified) });
+        icons.sym(c, "pencil", .{ .size = 11, .color = .hex(p.modified) });
         ui.text(c, c.print("{d} comments", .{wb.review.list.items.len}), .{ .size = 12, .color = t.muted });
         const ri = rv.interaction();
         rv.end();

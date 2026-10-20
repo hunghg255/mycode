@@ -2,6 +2,7 @@
 const std = @import("std");
 const myzig = @import("myzig");
 const ui = myzig.ui;
+const icons = @import("icons.zig");
 const fs = @import("fs.zig");
 const Doc = @import("doc.zig").Doc;
 
@@ -164,7 +165,7 @@ pub const Image = struct {
         }
         const size = ui.imageSize(c, im.key, im.bytes) orelse {
             const msg = ui.div(c).column().wFull().hFull().center().gap(12);
-            ui.icon(c, "photo", .{ .size = 32, .color = t.muted.alpha(0.5) });
+            icons.sym(c, "photo", .{ .size = 32, .color = t.muted.alpha(0.5) });
             ui.text(c, c.print("Cannot show {s}", .{std.fs.path.basename(im.path)}), .{ .size = 13, .color = t.muted });
             msg.end();
             return;

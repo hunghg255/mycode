@@ -36,6 +36,10 @@ needs a `## <version>` section here, or its build fails.
   Windows' Explorer-style dialog. The status bar names the folder and counts the file's lines. Fixed: opening a
   file no longer quits the Zig build when its minimap is an odd width, as `"minimapWidth": 79`, and closing the tab
   shown with its x or the middle button no longer quits it either.
+- The Zig build draws the Go app's icons (Lucide's) everywhere, its rail as the Go app's (each project's square in
+  its own color, the gear at its foot), the sidebar's views as buttons with the count of changes, and the
+  terminal panel's buttons (new, profiles, to the editor area, kill, maximize, close). Its window's buttons are
+  light on a dark theme.
 - **Stash Changes…** in the menu of a changed file in source control stashes that file alone, or the files chosen.
 - Fixed: the app no longer quits when a commit or a push takes files away from an open **Changes** tab scrolled down
   its list.

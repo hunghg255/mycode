@@ -36,6 +36,8 @@ pub const Shell = struct {
     title_dirty: bool = true,
     rail_menu: ui.Menu = .{},
     rail_at: usize = 0,
+    /// The square under the pointer.
+    rail_hot: ?usize = null,
     /// A square of the rail pressed, dragged to another place.
     rail_drag: ?struct { from: usize, start: ui.Point, moving: bool = false } = null,
     /// The squares as last laid out, for where a drag lets go.
@@ -487,7 +489,7 @@ pub const Shell = struct {
         {
             const cc = ui.div(c).row().w(420).h(24).px(10).gap(8).center().rounded(6).bg(t.surface).border(.hex(p.border)).hover(t.surface_hover);
             const hovered = cc.hovered();
-            ui.icon(c, "magnifyingglass", .{ .size = 11, .color = if (hovered) t.muted else t.muted.alpha(0.7) });
+            icons.sym(c, "magnifyingglass", .{ .size = 11, .color = if (hovered) t.muted else t.muted.alpha(0.7) });
             const name: []const u8 = if (wb) |w| if (w.editors.current()) |it| it.title(c) else "" else "";
             const dirty = if (wb) |w| if (w.editors.current()) |it| it.dirty() else false else false;
             const folder: []const u8 = if (wb) |w| std.fs.path.basename(w.root) else "";
@@ -526,29 +528,62 @@ pub const Shell = struct {
         wb.alert_len = n;
     }
 
+    /// The first letters of a project's first two words, as the Go app
+    /// takes them: words split at "-", "_", "." and before a capital after
+    /// a lowercase letter ("hisWeb", "his-web": "HW"; "myzig": "M").
     fn initials(c: *ui.Context, name: []const u8) []const u8 {
         var out: std.ArrayList(u8) = .empty;
-        var it = std.mem.tokenizeAny(u8, name, " -_.");
-        while (it.next()) |w| {
+        var start = true;
+        var prev: u8 = 0;
+        for (name) |ch| {
             if (out.items.len == 2) break;
-            out.append(c.alloc(), std.ascii.toUpper(w[0])) catch {};
+            const sep = ch == '-' or ch == '_' or ch == '.' or ch == ' ';
+            const camel = std.ascii.isUpper(ch) and std.ascii.isLower(prev);
+            if (!sep and (start or camel)) out.append(c.alloc(), std.ascii.toUpper(ch)) catch {};
+            start = sep;
+            prev = ch;
         }
-        if (out.items.len == 1 and name.len > 1) out.append(c.alloc(), name[1]) catch {};
+        if (out.items.len == 0) return "?";
         return out.items;
+    }
+
+    /// A project's color, by its folder, among the palette's: the Go app's
+    /// `avatarColor`.
+    fn projectColor(p: *const themes.Palette, dir: []const u8) ui.Color {
+        var h: u32 = 2166136261;
+        for (dir) |b| h = (h ^ b) *% 16777619;
+        const cols = [_]u24{ p.accent, p.added, p.changed, p.modified, p.removed, p.type };
+        return .hex(cols[h % cols.len]);
+    }
+
+    /// The rail's ground: a shade off the sidebar's, as an activity bar is.
+    fn railGround(p: *const themes.Palette) ui.Color {
+        const chrome: ui.Color = .hex(p.chrome);
+        return if (p.dark) chrome.mix(.hex(0x000000), 0.18) else chrome.mix(.hex(p.border), 0.22);
     }
 
     fn rail(sh: *Shell, c: *ui.Context) void {
         const t = c.theme;
         const p = sh.palette;
-        const col = ui.div(c).column().w(48).hFull().py(8).gap(8).itemsCenter().bg(.hex(p.chrome)).border(.hex(p.border));
-        defer col.end();
+        const col = ui.div(c).column().w(48).hFull().pt(8).gap(6).itemsCenter().bg(railGround(p));
+        defer {
+            col.end();
+            _ = c.leaf(.{ .width = .{ .px = 1 }, .height = .fill, .background = .hex(p.border) }, .none, null);
+        }
         var go: ?usize = null;
         for (sh.projects.items, 0..) |wb, i| {
             c.keyed(wb);
             const on = i == sh.current;
             const wrap = ui.div(c).row().w(48).h(36).itemsCenter().justifyCenter();
-            if (on) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 0, .y = 6 }, .width = .{ .px = 3 }, .height = .{ .px = 24 }, .radius = 2, .background = t.text }, .none, null);
-            const sq = ui.div(c).w(34).h(34).center().rounded(8).bg(if (on) t.accent else t.surface_hover).hover(t.accent.alpha(0.6));
+            const pc = projectColor(p, wb.root);
+            const hot = sh.rail_hot == i;
+            // Along the rail's edge, as the activity bar marks the view shown.
+            if (on or hot) {
+                const pill: f32 = if (on) 20 else 8;
+                _ = c.leaf(.{ .absolute = true, .offset = .{ .x = -2, .y = (36 - pill) / 2 }, .width = .{ .px = 5 }, .height = .{ .px = pill }, .radius = 2.5, .background = if (on) t.accent else t.muted }, .none, null);
+            }
+            const sq = ui.div(c).w(32).h(32).center().rounded(9).bg(pc.alpha(if (on) 0.30 else if (hot) 0.22 else 0.14)).border(if (on) pc.alpha(0.75) else .transparent);
+            const ink = if (on or hot) pc else pc.mix(t.muted, 0.25);
             if (sh.store.s.projectIcons and !wb.logo_read) {
                 wb.logo_read = true;
                 wb.logo = @import("logo.zig").find(sh.gpa, sh.io, wb.root);
@@ -557,10 +592,14 @@ pub const Shell = struct {
             if (project_logo) |l| {
                 const key = c.print("logo:{s}", .{wb.root});
                 const shown = if (l.svg) ui.svg(c, l.bytes, .{ .width = 22, .height = 22, .key = key }) else ui.image(c, .{ .key = key, .bytes = l.bytes, .max_width = 22, .max_height = 22, .radius = 4 });
-                if (!shown) ui.text(c, initials(c, wb.name()), .{ .size = 13, .weight = .semibold, .color = if (on) t.accent_text else t.text });
-            } else ui.text(c, initials(c, wb.name()), .{ .size = 13, .weight = .semibold, .color = if (on) t.accent_text else t.text });
-            if (wb.editors.anyDirty() or wb.bell) _ = c.leaf(.{ .absolute = true, .offset = .{ .x = 26, .y = 2 }, .width = .{ .px = 7 }, .height = .{ .px = 7 }, .radius = 4, .background = if (wb.bell) t.accent else t.text }, .none, null);
+                if (!shown) ui.text(c, initials(c, wb.name()), .{ .size = 12, .weight = .bold, .color = ink });
+            } else ui.text(c, initials(c, wb.name()), .{ .size = 12, .weight = .bold, .color = ink });
+            // Unsaved changes at the top right, an alert at the bottom right,
+            // each cut out of the square by a ring of the rail's ground.
+            if (wb.editors.anyDirty()) dot(c, 25, -5, t.text.alpha(0.85), railGround(p));
+            if (wb.bell) dot(c, 25, 25, t.accent, railGround(p));
             const si = sq.interaction();
+            if (si.hovered) sh.rail_hot = i else if (sh.rail_hot == i) sh.rail_hot = null;
             sq.end();
             const wi = wrap.interaction();
             wrap.end();
@@ -588,12 +627,22 @@ pub const Shell = struct {
         }
         if (go) |i| if (sh.rail_drag == null or !sh.rail_drag.?.moving) sh.show(i);
         sh.railDrag(c);
-        const plus = ui.div(c).w(34).h(34).center().rounded(8).hover(t.surface_hover);
-        ui.icon(c, "plus", .{ .size = 14, .color = t.muted });
-        if (plus.clicked()) sh.queue(.open_folder);
+        _ = c.leaf(.{ .width = .{ .px = 20 }, .height = .{ .px = 1 }, .background = .hex(p.border) }, .none, null);
+        // Open Folder: a square of dashes, as the Go app draws it.
+        const plus = ui.div(c).w(32).h(32).center().rounded(9).border(.hex(p.faint)).hover(t.accent.alpha(0.14));
+        icons.sym(c, "plus", .{ .size = 12, .color = if (plus.hovered()) t.accent else t.muted });
+        const pi = plus.interaction();
         plus.end();
+        ui.tooltip(c, pi, "Open Folder… (Ctrl+O)");
+        if (pi.clicked) sh.queue(.open_folder);
         ui.spacer(c);
+        // At its foot, as VS Code's activity bar has it.
         if (sh.active()) |wb| sh.manageButton(c, wb);
+    }
+
+    fn dot(c: *ui.Context, x: f32, y: f32, color: ui.Color, ground: ui.Color) void {
+        _ = c.leaf(.{ .absolute = true, .offset = .{ .x = x - 2, .y = y - 2 }, .width = .{ .px = 14 }, .height = .{ .px = 14 }, .radius = 7, .background = ground }, .none, null);
+        _ = c.leaf(.{ .absolute = true, .offset = .{ .x = x, .y = y }, .width = .{ .px = 10 }, .height = .{ .px = 10 }, .radius = 5, .background = color }, .none, null);
     }
 
     /// Moves project `from` to place `to` of the rail, the one shown staying shown.
@@ -641,8 +690,8 @@ pub const Shell = struct {
     /// The gear: the Manage menu, as VS Code's.
     pub fn manageButton(sh: *Shell, c: *ui.Context, wb: *Workbench) void {
         const t = c.theme;
-        const g = ui.div(c).w(30).h(22).center().rounded(4).hover(t.surface_hover);
-        ui.icon(c, "wrench.and.screwdriver", .{ .size = 12, .color = t.muted });
+        const g = ui.div(c).w(40).h(36).center().rounded(6).hover(t.surface_hover);
+        icons.sym(c, "wrench.and.screwdriver", .{ .size = 12, .color = if (g.hovered()) t.text else t.muted });
         const gi = g.interaction();
         g.end();
         if (ui.buttonMenu(c, &sh.manage_menu, gi)) |m| {
@@ -722,7 +771,7 @@ pub const Shell = struct {
         var new_window = false;
         for (shown.items, 0..) |r, i| {
             const row = ui.div(c).row().wFull().h(28).px(8).gap(8).itemsCenter().rounded(4).bg(if (i == sh.recent_sel) t.accent.alpha(0.25) else .transparent).hover(t.surface_hover);
-            ui.icon(c, "folder", .{ .size = 12, .color = t.muted });
+            icons.sym(c, "folder", .{ .size = 12, .color = t.muted });
             ui.text(c, std.fs.path.basename(r), .{ .size = 13 });
             ui.text(c, r, .{ .size = 11, .color = t.muted });
             if (row.clicked()) {

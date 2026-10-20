@@ -171,13 +171,13 @@ pub const QuickOpen = struct {
                 const inf = commands.info(q.cmds.items[i]);
                 ui.text(c, inf.title, .{ .size = 13 });
                 ui.spacer(c);
-                if (q.is_on) |f| if (f(q.key_ctx, q.cmds.items[i])) ui.icon(c, "checkmark", .{ .size = 12, .color = t.accent });
+                if (q.is_on) |f| if (f(q.key_ctx, q.cmds.items[i])) icons.sym(c, "checkmark", .{ .size = 12, .color = t.accent });
                 if (inf.menu.len > 0) ui.text(c, inf.menu, .{ .size = 11, .color = t.muted });
                 const keys = if (q.key_label) |f| f(q.key_ctx, c, q.cmds.items[i]) else "";
                 if (keys.len > 0) ui.text(c, keys, .{ .size = 11, .color = t.muted, .mono = true });
             } else if (std.mem.startsWith(u8, text, "@")) {
                 const sy = q.syms[q.sym_hits.items[i]];
-                ui.icon(c, switch (sy.kind) {
+                icons.sym(c, switch (sy.kind) {
                     .function => "chevron.left.forwardslash.chevron.right",
                     .type => "cube",
                     .heading => "textformat",

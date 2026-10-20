@@ -20,6 +20,9 @@ The terminal downloads libghostty-vt and ConPTY into the user's cache the first 
 beside the executable: `resources/` holds them for the installer (`ghostty-vt.dll`, `conpty.dll`,
 `OpenConsole.exe`, from `%LOCALAPPDATA%\mygo\natives`; they are not in Git).
 
+The Go app's icons (Lucide's, in `cmd/mayoi/icons.go`) are written to `src/lucide.zig` by `python icons/lucide.py`;
+the file icons (Material's) to `icons/material.zig` by `python icons/update.py`.
+
 ## The installer
 
 The myzig CLI (`cd ../../myzig/cli && zig build -Doptimize=ReleaseSmall`) packages the app with its icon, version and
