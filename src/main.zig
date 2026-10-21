@@ -382,6 +382,9 @@ pub fn main(init: std.process.Init) !void {
         m.updates.deinit();
     }
     @import("crashlog.zig").start(gpa, io, m.store.dir);
+    // A stall, as a crash, leaves the main thread's stack in that log (not
+    // in headless runs, whose scripts keep the main thread for seconds).
+    if (!dev) @import("hangwatch.zig").start(io);
     // Not for headless runs (snapshots, tests): they leave the registry be.
     if (!dev) @import("winshell.zig").atStart(gpa, io, init.environ_map, m.store.dir);
     m.state = .load(gpa, io, m.store.state_path);
