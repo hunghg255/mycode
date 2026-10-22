@@ -368,7 +368,18 @@ fn runCase(t: *T, case: Case, exe: []const u8) !void {
         try argv.append(t.gpa, try std.fmt.allocPrint(t.gpa, "--myzig-snapshot={s}", .{shot}));
         try argv.append(t.gpa, try std.fmt.allocPrint(t.gpa, "--myzig-script={s}", .{run.script}));
         try argv.append(t.gpa, try t.gpa.dupe(u8, "--myzig-dark"));
-        const r = try std.process.run(t.gpa, t.io, .{ .argv = argv.items, .environ_map = &env, .stdout_limit = .limited(16 << 20), .stderr_limit = .limited(16 << 20) });
+        // A run that says nothing for two minutes stopped answering: it is
+        // ended, and the case fails, rather than the whole suite waiting.
+        const r = std.process.run(t.gpa, t.io, .{
+            .argv = argv.items,
+            .environ_map = &env,
+            .stdout_limit = .limited(16 << 20),
+            .stderr_limit = .limited(16 << 20),
+            .timeout = .{ .duration = .{ .raw = .fromSeconds(120), .clock = .awake } },
+        }) catch |err| {
+            if (err == error.Timeout) std.debug.print("    the app stopped answering (ended after 120 s)\n    script: {s}\n", .{run.script});
+            return err;
+        };
         defer t.gpa.free(r.stdout);
         defer t.gpa.free(r.stderr);
         if (!r.term.success()) {

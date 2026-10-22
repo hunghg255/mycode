@@ -45,7 +45,11 @@ pub fn find(a: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Ma
         const path = expand(a, env, p.path);
         const found = if (std.fs.path.isAbsolute(path)) fs.exists(io, path) else which(a, io, env, path) != null;
         if (!found) continue;
-        const prof: Profile = .{ .name = p.name, .path = path, .args = p.args };
+        // Copied: the settings' strings go as settings.json is read again,
+        // and the profiles stay (a terminal made after read them freed).
+        const args = a.alloc([]const u8, p.args.len) catch continue;
+        for (p.args, args) |x, *y| y.* = a.dupe(u8, x) catch "";
+        const prof: Profile = .{ .name = a.dupe(u8, p.name) catch continue, .path = a.dupe(u8, path) catch continue, .args = args };
         var replaced = false;
         for (out.items) |*o| if (std.mem.eql(u8, o.name, p.name)) {
             o.* = prof;
@@ -90,4 +94,30 @@ fn which(a: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, 
         if (fs.exists(io, p)) return p;
     };
     return null;
+}
+
+test "the settings' own profiles are copied, as the settings go when read again" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var env: std.process.Environ.Map = .init(std.testing.allocator);
+    defer env.deinit();
+    // A shell found on every system, by an absolute path.
+    const shell = if (builtin.os.tag == .windows) "C:\\Windows\\System32\\cmd.exe" else "/bin/sh";
+    var name = "Mine".*;
+    var arg = "-x".*;
+    var path = shell.*;
+    const args = [_][]const u8{&arg};
+    const own = [_]settings.Profile{.{ .name = &name, .path = &path, .args = &args }};
+    const found = find(arena.allocator(), std.testing.io, &env, &own);
+    // The settings' text changes, as their arena is freed and used again.
+    @memset(&name, 'X');
+    @memset(&arg, 'X');
+    @memset(&path, 'X');
+    var mine: ?Profile = null;
+    for (found) |p| if (std.mem.eql(u8, p.name, "Mine")) {
+        mine = p;
+    };
+    try std.testing.expect(mine != null);
+    try std.testing.expectEqualStrings("-x", mine.?.args[0]);
+    try std.testing.expectEqualStrings(shell, mine.?.path);
 }

@@ -55,6 +55,10 @@ pub const Store = struct {
     state_path: []u8,
     s: Settings = .{},
     arena: std.heap.ArenaAllocator,
+    /// The settings read before, kept until the next read: one read in the
+    /// middle of a frame (settings.json saved in the editor) leaves the
+    /// strings the frame drew.
+    old_arena: std.heap.ArenaAllocator,
     mtime: i96 = -1,
     /// Bumped whenever the settings change, so views apply them once.
     version: u64 = 1,
@@ -71,6 +75,7 @@ pub const Store = struct {
             // The Go app's state.json has another shape: the port keeps its own.
             .state_path = try std.fs.path.join(gpa, &.{ dir, "state-zig.json" }),
             .arena = .init(gpa),
+            .old_arena = .init(gpa),
         };
         migrate(gpa, io, dir, st.settings_path);
         _ = st.reload();
@@ -100,6 +105,7 @@ pub const Store = struct {
 
     pub fn deinit(st: *Store) void {
         st.arena.deinit();
+        st.old_arena.deinit();
         st.gpa.free(st.dir);
         st.gpa.free(st.settings_path);
         st.gpa.free(st.keys_path);
@@ -113,7 +119,9 @@ pub const Store = struct {
         st.mtime = m;
         const data = fs.read(st.gpa, st.io, st.settings_path) catch return false;
         defer st.gpa.free(data);
-        _ = st.arena.reset(.retain_capacity);
+        st.old_arena.deinit();
+        st.old_arena = st.arena;
+        st.arena = .init(st.gpa);
         const a = st.arena.allocator();
         const v = std.json.parseFromSliceLeaky(std.json.Value, a, data, .{}) catch return false;
         st.s = parse(a, v);
