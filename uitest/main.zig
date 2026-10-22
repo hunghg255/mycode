@@ -48,6 +48,12 @@ const cases = [_]Case{
         .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;move:a.txt;move:b.txt;click:src;move:needle.zig" }},
     },
     .{
+        // A click on a row focuses the tree, so its keys reach it (Ctrl+C and Ctrl+V too).
+        .name = "a file clicked in the explorer takes Delete",
+        .files = files_ab,
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;click:b.txt;frames:2;key:delete;frames:2;move:It goes to the Recycle Bin." }},
+    },
+    .{
         .name = "welcome page shows with no file open",
         .files = files_ab,
         .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;move:START;move:Quick Open…" }},

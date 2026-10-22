@@ -165,7 +165,9 @@ pub fn copyInto(wb: *Workbench, files: []const []const u8, dir: []const u8) void
     var last: ?[]u8 = null;
     defer if (last) |l| wb.gpa.free(l);
     for (files) |src| {
-        const to = freeName(wb, dir, std.fs.path.basename(src)) orelse continue;
+        // A folder pasted into itself (or a folder in it) goes beside it, as a copy.
+        const into = if (within(dir, src)) std.fs.path.dirname(src) orelse dir else dir;
+        const to = freeName(wb, into, std.fs.path.basename(src)) orelse continue;
         copyTree(wb, src, to) catch |err| {
             wb.toastError("Couldn't paste", @errorName(err));
             wb.gpa.free(to);
@@ -196,12 +198,26 @@ fn freeName(wb: *Workbench, dir: []const u8, name: []const u8) ?[]u8 {
     return null;
 }
 
+/// Whether `path` is `folder` or inside it.
+fn within(path: []const u8, folder: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, folder)) return false;
+    return path.len == folder.len or path[folder.len] == '/' or path[folder.len] == '\\';
+}
+
+test "a folder pasted into itself or a folder in it" {
+    try std.testing.expect(within("C:\\p\\src", "C:\\p\\src"));
+    try std.testing.expect(within("C:\\p\\src\\ui", "C:\\p\\src"));
+    try std.testing.expect(!within("C:\\p\\src2", "C:\\p\\src"));
+    try std.testing.expect(!within("C:\\p", "C:\\p\\src"));
+}
+
 fn copyTree(wb: *Workbench, src: []const u8, dst: []const u8) !void {
     const cwd = std.Io.Dir.cwd();
     if (!fs.isDirectory(wb.io, src)) return cwd.copyFile(src, cwd, dst, wb.io, .{});
-    try cwd.createDirPath(wb.io, dst);
+    // Listed before the copy is made, so that a copy inside never copies itself.
     const list = try fs.list(wb.gpa, wb.io, src);
     defer fs.freeList(wb.gpa, list);
+    try cwd.createDirPath(wb.io, dst);
     for (list) |e| {
         const to = try std.fs.path.join(wb.gpa, &.{ dst, std.fs.path.basename(e.path) });
         defer wb.gpa.free(to);

@@ -5,6 +5,13 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Ctrl+C and Ctrl+V copy and paste files and folders in the **Explorer** after a click on one: the click chose the
+  row but left the keys elsewhere, so they did nothing (F2 too). Delete moves the chosen file to the Recycle Bin, as
+  its menu says; the key never reached it.
+
+- A folder copied and pasted onto itself (or onto a folder inside it) in the **Explorer** is pasted beside it as
+  "name copy", instead of copying itself into itself, folder within folder, until the path grew too long.
+
 - Pasting more than 127 lines into a file no longer crashes the app when **Word Wrap** is on (`wordWrap`), and
   neither does an undo that brings back as many after a cut or a deletion. The editor counted the lines past its
   first 64 in a number too small for them.

@@ -446,5 +446,6 @@ test {
     _ = @import("tabdrag.zig");
     _ = @import("scmtree.zig");
     _ = @import("checks.zig");
+    _ = @import("wb_files.zig");
     _ = termprofiles;
 }
