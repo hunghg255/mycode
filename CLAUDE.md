@@ -71,7 +71,11 @@ big picture:
 - `c.scroll_max` is kept only for boxes that follow their end; a box's scroll length is `c.scroll_limit` (the last
   layout's).
 - Crash logs: Windows builds keep their debug information, so with `mycode.pdb` beside `MyCode.exe` (copy it from
-  `.myzig/build/windows-x86_64/x86_64/bin/`), `%APPDATA%\MyCode\crash-zig.log` has the stack.
+  `.myzig/build/windows-x86_64/x86_64/bin/`), `%APPDATA%\MyCode\crash-zig.log` has the stack. A release build's
+  panic can name the wrong line (inlined code): `integer overflow` in `numbers.append` was `WrapCache.sync`. Run
+  `zig build` (Debug) with the same `settings.json` for the true line.
+- `@min` with a comptime bound narrows its type (`@min(x, 64)` is a `u7`): type the result (`const n: usize`)
+  before counting on from it.
 - Text is selectable unless its box has `.control()`.
 - Keep files short and changes to myzig itself out of this repository; myzig is its own project.
 

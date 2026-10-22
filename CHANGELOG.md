@@ -5,6 +5,10 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- Pasting more than 127 lines into a file no longer crashes the app when **Word Wrap** is on (`wordWrap`), and
+  neither does an undo that brings back as many after a cut or a deletion. The editor counted the lines past its
+  first 64 in a number too small for them.
+
 - A terminal of a profile of your own (`terminalProfiles`) no longer crashes the app after the settings change: its
   name, path and arguments pointed into the settings' text, which goes each time settings.json is read again. Saving
   settings.json in the editor no longer frees, in the middle of drawing the window, the settings it shows.
