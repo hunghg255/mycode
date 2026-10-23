@@ -113,6 +113,22 @@ const cases = [_]Case{
         .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;shortcut:ctrl+shift+f;type:findme;live:1;move:needle.zig" }},
     },
     .{
+        // A long line's result was cut within a character ("ạ" is 3 bytes) and crashed the text measure.
+        .name = "search shows a long line of Vietnamese",
+        .files = &.{.{ .path = "alpha/viet.txt", .data = blk: {
+            var s: []const u8 = "findmex";
+            for (0..100) |_| s = s ++ "ạ";
+            break :blk s ++ "\n";
+        } }},
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;shortcut:ctrl+shift+f;type:findme;live:1;move:viet.txt" }},
+    },
+    .{
+        // The project's badge took the first byte of "Ứng" and "Đức", half a character.
+        .name = "a project named in Vietnamese shows its initials",
+        .files = &.{.{ .path = "Ứng-Đức/a.txt", .data = "a\n" }},
+        .runs = &.{.{ .open = &.{"Ứng-Đức"}, .script = "frames:3;move:a.txt" }},
+    },
+    .{
         .name = "source control lists changes and commits them",
         .files = files_ab,
         .repos = &.{"alpha"},

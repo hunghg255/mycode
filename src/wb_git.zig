@@ -210,7 +210,7 @@ pub fn commit(wb: *Workbench, all: bool, amend: bool, then_push: bool) void {
             // As the Go app's: its subject, cut short, and the branch.
             const subject = std.mem.sliceTo(msg, '\n');
             var buf: [160]u8 = undefined;
-            const cut = if (subject.len > 48) subject[0..47] else subject;
+            const cut = if (subject.len > 48) @import("utf8.zig").cut(subject, 47) else subject;
             const text = if (wb.scm.branch) |b|
                 std.fmt.bufPrint(&buf, "Committed “{s}{s}” to {s}", .{ cut, if (subject.len > 48) "…" else "", b }) catch "Committed"
             else

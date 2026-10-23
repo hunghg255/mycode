@@ -3,6 +3,7 @@
 //! breadcrumbs with the blocks around the caret, the conflict bar, the
 //! minimap, and the keys the window takes itself.
 const std = @import("std");
+const utf8 = @import("utf8.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const fs = @import("fs.zig");
@@ -519,7 +520,7 @@ fn notes(wb: *Workbench, c: *ui.Context, d: *Doc, rel: []const u8) void {
     }
     for (wb.review.list.items) |cm| if (!cm.outdated and std.mem.eql(u8, cm.path, rel)) {
         const first = std.mem.sliceTo(cm.text, '\n');
-        list.append(c.alloc(), .{ .line = cm.last, .text = c.print("● {s}", .{first[0..@min(first.len, 120)]}), .color = .hex(wb.shell.palette.modified) }) catch {};
+        list.append(c.alloc(), .{ .line = cm.last, .text = c.print("● {s}", .{utf8.cut(first, 120)}), .color = .hex(wb.shell.palette.modified) }) catch {};
     };
     d.notes = list.items;
 }
@@ -658,7 +659,7 @@ pub fn reviewStatus(wb: *Workbench, c: *ui.Context) void {
         rv.end();
         if (ui.buttonMenu(c, &wb.review_menu, ri)) |m| {
             defer m.end();
-            for (wb.review.list.items) |cm| if (m.item(c.print("{s}:{d}  {s}", .{ cm.path, cm.first + 1, cm.text[0..@min(cm.text.len, 40)] }), .{})) {
+            for (wb.review.list.items) |cm| if (m.item(c.print("{s}:{d}  {s}", .{ cm.path, cm.first + 1, utf8.cut(cm.text, 40) }), .{})) {
                 const abs = std.fs.path.join(c.alloc(), &.{ wb.root, cm.path }) catch continue;
                 if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, abs, '/', std.fs.path.sep);
                 if (wb.editors.openFile(abs, false)) |it| switch (it.body) {

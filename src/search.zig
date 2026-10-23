@@ -220,9 +220,11 @@ const Work = struct {
                 ms.clearRetainingCapacity();
                 matchLine(gpa, w.o, if (re) |*r| r else null, line, &ms);
                 for (ms.items) |m| {
-                    // A long line shows around its match.
-                    const from = if (m[0] > 60) m[0] - 60 else 0;
-                    const to = @min(line.len, m[1] + 120);
+                    // A long line shows around its match, cut between characters.
+                    var from = if (m[0] > 60) m[0] - 60 else 0;
+                    while (from > 0 and line[from] & 0xc0 == 0x80) from -= 1;
+                    var to = @min(line.len, m[1] + 120);
+                    while (to < line.len and line[to] & 0xc0 == 0x80) to += 1;
                     found.append(ba, .{ .line = ln, .col = m[0], .start = m[0] - from, .end = m[1] - from, .text = ba.dupe(u8, line[from..to]) catch "" }) catch break;
                     total += 1;
                 }

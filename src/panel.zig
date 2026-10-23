@@ -2,6 +2,7 @@
 //! on Windows): `Term` is one, shown in the bottom panel or in a column's
 //! tab; `Panel` is the bottom panel with its chips, profiles and buttons.
 const std = @import("std");
+const utf8 = @import("utf8.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const Cmd = @import("commands.zig").Cmd;
@@ -88,7 +89,7 @@ pub const Term = struct {
             term.argv = try gpa.alloc([]const u8, p.args.len + 1);
             term.argv[0] = try gpa.dupe(u8, p.path);
             for (p.args, 1..) |a, i| term.argv[i] = try gpa.dupe(u8, a);
-            const n = @min(p.name.len, term.profile_buf.len);
+            const n = utf8.cut(p.name, term.profile_buf.len).len;
             @memcpy(term.profile_buf[0..n], p.name[0..n]);
             term.profile_len = n;
         }
@@ -122,7 +123,7 @@ pub const Term = struct {
     fn setAlert(term: *Term, parts: []const []const u8) void {
         var w: std.Io.Writer = .fixed(&term.alert_buf);
         for (parts) |p| w.writeAll(p) catch {};
-        term.alert_len = w.buffered().len;
+        term.alert_len = utf8.whole(w.buffered()).len;
     }
 
     pub fn alert(term: *const Term) []const u8 {
@@ -151,7 +152,7 @@ pub const Term = struct {
             .title => {
                 const title = t.title(term.gpa) catch return;
                 defer term.gpa.free(title);
-                const n = @min(title.len, term.title_buf.len);
+                const n = utf8.cut(title, term.title_buf.len).len;
                 @memcpy(term.title_buf[0..n], title[0..n]);
                 term.title_len = n;
             },

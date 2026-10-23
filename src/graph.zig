@@ -2,6 +2,7 @@
 //! graph of their branches, each with its author's initials, its branches
 //! and tags, and its age; a ring marks HEAD, a hollow dot a merge.
 const std = @import("std");
+const utf8 = @import("utf8.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const icons = @import("icons.zig");
@@ -329,9 +330,10 @@ pub const Ref = struct { name: []const u8, kind: enum { branch, remote, tag } };
 fn initials(c: *ui.Context, name: []const u8) []const u8 {
     var out: std.ArrayList(u8) = .empty;
     var it = std.mem.tokenizeAny(u8, name, " .-_");
-    while (it.next()) |w| {
-        if (out.items.len == 2) break;
-        out.append(c.alloc(), std.ascii.toUpper(w[0])) catch {};
+    var n: usize = 0;
+    while (it.next()) |w| : (n += 1) {
+        if (n == 2) break;
+        out.appendSlice(c.alloc(), utf8.initial(c.alloc(), w)) catch {};
     }
     return out.items;
 }

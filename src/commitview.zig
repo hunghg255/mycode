@@ -1,6 +1,7 @@
 //! A commit in a tab: its message, author, date, hash, branches and tags,
 //! then each file it changed from its first parent.
 const std = @import("std");
+const utf8 = @import("utf8.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const git = @import("git.zig");
@@ -76,7 +77,7 @@ pub const CommitView = struct {
 
     pub fn subject(cv: *const CommitView) []const u8 {
         const s = std.mem.sliceTo(cv.message, '\n');
-        return s[0..@min(s.len, 40)];
+        return utf8.cut(s, 40);
     }
 
     /// The card at the top of a commit's diff, as the Go app's: its
@@ -151,9 +152,10 @@ pub const CommitView = struct {
     fn initials(c: *ui.Context, name: []const u8) []const u8 {
         var out: std.ArrayList(u8) = .empty;
         var it = std.mem.tokenizeAny(u8, name, " .-_");
-        while (it.next()) |w| {
-            if (out.items.len == 2) break;
-            out.append(c.alloc(), std.ascii.toUpper(w[0])) catch {};
+        var n: usize = 0;
+        while (it.next()) |w| : (n += 1) {
+            if (n == 2) break;
+            out.appendSlice(c.alloc(), utf8.initial(c.alloc(), w)) catch {};
         }
         return out.items;
     }

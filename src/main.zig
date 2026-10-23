@@ -448,4 +448,5 @@ test {
     _ = @import("checks.zig");
     _ = @import("wb_files.zig");
     _ = termprofiles;
+    _ = @import("utf8.zig");
 }

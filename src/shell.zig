@@ -2,6 +2,7 @@
 //! the theme, and the window's own commands: folders, settings, zoom,
 //! themes. The app's state (settings, keys, recent folders) is `Main`'s.
 const std = @import("std");
+const utf8 = @import("utf8.zig");
 const myzig = @import("myzig");
 const ui = myzig.ui;
 const termlinks = @import("termlinks.zig");
@@ -288,8 +289,8 @@ pub const Shell = struct {
         if (ui.keys.mac) return k;
         var out: std.ArrayList(u8) = .empty;
         const a = c.alloc();
-        const utf8 = std.unicode.Utf8View.init(k) catch return k;
-        var it = utf8.iterator();
+        const cps = std.unicode.Utf8View.init(k) catch return k;
+        var it = cps.iterator();
         while (it.nextCodepointSlice()) |cp| {
             const r: []const u8 = if (std.mem.eql(u8, cp, "⌘")) "Ctrl+" else if (std.mem.eql(u8, cp, "⌃")) "Ctrl+" else if (std.mem.eql(u8, cp, "⌥")) "Alt+" else if (std.mem.eql(u8, cp, "⇧")) "Shift+" else if (std.mem.eql(u8, cp, "↑")) "Up" else if (std.mem.eql(u8, cp, "↓")) "Down" else if (std.mem.eql(u8, cp, "↵")) "Enter" else cp;
             out.appendSlice(a, r) catch {};
@@ -649,7 +650,7 @@ pub const Shell = struct {
     fn noteAlert(wb: *Workbench, t: *const @import("panel.zig").Term) void {
         wb.bell = true;
         const a = t.alert();
-        const n = @min(a.len, wb.alert_buf.len);
+        const n = utf8.cut(a, wb.alert_buf.len).len;
         @memcpy(wb.alert_buf[0..n], a[0..n]);
         wb.alert_len = n;
     }
@@ -661,11 +662,15 @@ pub const Shell = struct {
         var out: std.ArrayList(u8) = .empty;
         var start = true;
         var prev: u8 = 0;
-        for (name) |ch| {
-            if (out.items.len == 2) break;
+        var n: usize = 0;
+        for (name, 0..) |ch, i| {
+            if (n == 2) break;
             const sep = ch == '-' or ch == '_' or ch == '.' or ch == ' ';
             const camel = std.ascii.isUpper(ch) and std.ascii.isLower(prev);
-            if (!sep and (start or camel)) out.append(c.alloc(), std.ascii.toUpper(ch)) catch {};
+            if (!sep and (start or camel)) {
+                out.appendSlice(c.alloc(), utf8.initial(c.alloc(), name[i..])) catch {};
+                n += 1;
+            }
             start = sep;
             prev = ch;
         }

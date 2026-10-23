@@ -48,7 +48,7 @@ pub const Prompt = struct {
 
     pub fn ask(p: *Prompt, purpose: Purpose, title: []const u8, initial: []const u8, target: []const u8) void {
         p.purpose = purpose;
-        p.title_len = @min(title.len, p.title.len);
+        p.title_len = @import("utf8.zig").cut(title, p.title.len).len;
         @memcpy(p.title[0..p.title_len], title[0..p.title_len]);
         p.target_len = @min(target.len, p.target.len);
         @memcpy(p.target[0..p.target_len], target[0..p.target_len]);

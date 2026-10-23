@@ -5,6 +5,14 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- **Search** no longer crashes on a long line with accented letters (Vietnamese, for one): the result shows the line
+  around its match, and that cut could fall inside a letter, which the text measure then refused. Such a result no
+  longer starts with stray symbols either.
+
+- A project or commit author named with accented letters (**Ứng-Đức**) shows them in its badge, where it showed half
+  a letter that could crash the app. Terminal titles, notifications, commit toasts and review comments cut short
+  keep their last letter whole too.
+
 - Ctrl+C and Ctrl+V copy and paste files and folders in the **Explorer** after a click on one: the click chose the
   row but left the keys elsewhere, so they did nothing (F2 too). Delete moves the chosen file to the Recycle Bin, as
   its menu says; the key never reached it.
