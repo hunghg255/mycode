@@ -30,7 +30,7 @@ pub fn explorerEvent(wb: *Workbench, c: *ui.Context, ev: explorer_mod.Event) voi
             wb.prompt.hint(fs.relative(wb.root, p));
         },
         .trash => |p| wb.ask(.trash, p, c.print("Delete “{s}”?", .{std.fs.path.basename(p)}), "It goes to the Recycle Bin.", &.{ "Cancel", "Delete" }),
-        .open_changes => |p| wbgit.openChangesTab(wb, p, true),
+        .open_changes => |p| wbgit.openChangesTab(wb, p, null),
         .open_terminal => |dir| newTerminalAt(wb, dir),
         .paste => |dir| pasteFiles(wb, dir),
         .press => |p| startFileDrag(wb, c, p),
@@ -510,7 +510,7 @@ pub fn tabRequest(wb: *Workbench, c: *ui.Context, req: columns.Editors.Request) 
             wb.side = .explorer;
             wb.explorer.reveal(p);
         },
-        .open_changes => |p| wbgit.openChangesTab(wb, p, true),
+        .open_changes => |p| wbgit.openChangesTab(wb, p, null),
         .to_panel => |t| wb.panel.add(t),
         .to_locked => |t| toLockedColumn(wb, t),
         .copy_path => |p| _ = myzig.clipboard.writeText(p),

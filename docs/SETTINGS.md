@@ -63,6 +63,7 @@ takes its default.
 | `minimap`              | `true`        | `true`, `false`                                             | **View → Minimap**                             |
 | `minimapWidth`         | `90`          | 40 to 400                                                   | Dragging the minimap's left edge               |
 | `diffLayout`           | `""`          | `""` (side by side when wide enough), `"split"`, `"inline"` | A diff's **Layout** button                     |
+| `diffAllFiles`         | `false`       | `true`, `false`                                             | **Show All Files** in a diff's **Layout** menu |
 | `scmTree`              | `false`       | `true`, `false`                                             | **View as Tree** in Source Control's menu      |
 | `scmAllBranches`       | `false`       | `true`, `false`                                             | **Show All Branches** in Source Control's menu |
 
@@ -120,6 +121,7 @@ differ in width lines them up only roughly.
 - **`blame`** shows who last changed the caret's line, and when, at the end of the line.
 - **`minimap`** shows the whole file, small, along the right of each editor, and **`minimapWidth`** is how wide it
   is, in points.
+- **`diffAllFiles`** shows every changed file in one scroll in the **Changes** tab, rather than one file at a time.
 - **`scmTree`** lists Source Control's changes in a tree of their folders, rather than by path.
 - **`scmAllBranches`** shows the commits of every branch and tag, not only those of the branch checked out.
 

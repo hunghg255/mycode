@@ -17,12 +17,15 @@ pub const FsWatch = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
     root: []u8,
-    w: ?*watch.Watcher = null,
-    thread: ?std.Thread = null,
+    w: std.atomic.Value(?*watch.Watcher) = .init(null),
+    thread: std.Thread = undefined,
     stopping: std.atomic.Value(bool) = .init(false),
     files: std.atomic.Value(bool) = .init(false),
     git: std.atomic.Value(bool) = .init(false),
     posted: std.atomic.Value(bool) = .init(false),
+    /// The project's, the thread's and a delivery's queued: the last one
+    /// frees it.
+    refs: std.atomic.Value(u32) = .init(2),
     ctx: *anyopaque,
     notify: *const fn (ctx: *anyopaque) void,
 
@@ -39,14 +42,19 @@ pub const FsWatch = struct {
         return f;
     }
 
+    /// Stops following the folder without waiting for the thread, which
+    /// may be reading the whole folder (a minute, on a big one not yet in
+    /// the disk's cache): closing the project would hang until it ends.
     pub fn stop(f: *FsWatch) void {
-        f.stopping.store(true, .release);
-        if (f.w) |w| w.close();
-        if (f.thread) |t| t.join();
-        if (f.w) |w| w.deinit();
-        f.w = null;
-        // A delivery still queued for the main thread reads it: then it stays.
-        if (f.posted.load(.acquire)) return;
+        f.stopping.store(true, .seq_cst);
+        if (f.w.load(.seq_cst)) |w| w.close();
+        f.thread.detach();
+        f.release();
+    }
+
+    fn release(f: *FsWatch) void {
+        if (f.refs.fetchSub(1, .acq_rel) != 1) return;
+        if (f.w.load(.acquire)) |w| w.deinit();
         f.gpa.free(f.root);
         f.gpa.destroy(f);
     }
@@ -67,10 +75,12 @@ pub const FsWatch = struct {
     }
 
     fn run(f: *FsWatch) void {
+        defer f.release();
         const w = watch.Watcher.init(f.gpa, f.io, f.root, .{ .recursive = true, .ignore = ignore, .debounce_ms = 150 }) catch return;
-        // `stop` closes and frees it; it may have looked before it was set.
-        f.w = w;
-        if (f.stopping.load(.acquire)) return;
+        // `stop` closes it, and the last reference frees it; it may have
+        // looked before it was set.
+        f.w.store(w, .seq_cst);
+        if (f.stopping.load(.seq_cst)) return;
         var arena: std.heap.ArenaAllocator = .init(f.gpa);
         defer arena.deinit();
         while (!f.stopping.load(.acquire)) {
@@ -87,13 +97,18 @@ pub const FsWatch = struct {
                 any = true;
             }
             if (any and !f.posted.swap(true, .acq_rel)) {
-                if (!jobs.post(f, deliver)) f.posted.store(false, .release);
+                _ = f.refs.fetchAdd(1, .acq_rel);
+                if (!jobs.post(f, deliver)) {
+                    f.posted.store(false, .release);
+                    f.release();
+                }
             }
         }
     }
 
     fn deliver(ctx: ?*anyopaque) callconv(.c) void {
         const f: *FsWatch = @ptrCast(@alignCast(ctx.?));
+        defer f.release();
         if (f.stopping.load(.acquire)) return;
         f.notify(f.ctx);
     }

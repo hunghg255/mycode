@@ -182,8 +182,8 @@ again (`hunksOf`), the hunk is applied toward one side (`apply`), and the result
 `git hash-object -w` and `git update-index --cacheinfo` (`writeIndex`). Reverting a hunk in the editor is an edit of
 the document.
 
-**`difflist.zig`, `changes.zig`, `commitview.zig`.** A `DiffList` shows the diffs of several files in one scroll: each
-file under a header, side by side or in one column (`auto` chooses side by side when each side has room for 80
+**`difflist.zig`, `changes.zig`, `commitview.zig`.** A `DiffList` shows the diffs of several files, one at a time (`single`, the Changes tab's
+unless `diffAllFiles`) or in one scroll: each file under a header, side by side or in one column (`auto` chooses side by side when each side has room for 80
 columns), its runs of changes under `@@` lines with buttons to stage, unstage or discard them, three unchanged lines
 around them, and review comments under their lines. A file is read as it comes into view, and one with over 2,000
 changed lines starts folded. The rows are made again each frame from myzig's `ui.DiffView`. `wb_git.readSide` reads
@@ -228,7 +228,9 @@ this way; the Git status, the gutter's marks and the diffs' sides are read on th
 **`fswatch.zig`.** Each project's `FsWatch` follows its folder with the watch plugin on a thread of its own, recursively,
 with 150 ms of debounce. It leaves out heavy folders and Git's objects but watches `.git` itself and `.git/refs`, so a
 commit or checkout made in a terminal is seen. A change sets atomic flags and posts once to the main thread, where
-`Workbench.onDiskChange` reads the Explorer, the open files and Git's state again.
+`Workbench.onDiskChange` reads the Explorer, the open files and Git's state again. `stop` never waits for the thread,
+which may be reading the whole folder: the project, the thread and a queued delivery each hold a reference, and the
+last frees the watcher.
 
 ## Settings and state
 

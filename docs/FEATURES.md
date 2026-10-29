@@ -136,14 +136,16 @@ message or the name of a branch or tag, and on HEAD undoes it.
 ### Diffs
 
 Every file changed shows in one **Changes** tab, as source control lists them: the staged changes first, from HEAD
-to the index, then the rest, from the index to the work tree. Each file is under a header with its path and the lines
-added and removed. Click a file in source control and the tab scrolls to it; **Open Changes** from the Explorer, a
-tab's menu or the **Git** menu does the same for a file. As you scroll, source control chooses the file you are
-reading. The diff follows a file as you type in it.
+to the index, then the rest, from the index to the work tree. The tab shows one file at a time, under a header with
+its path and the lines added and removed. Click a file in source control and the tab shows it (its staged changes or
+the rest, as the row you clicked); **Open Changes** from the Explorer, a tab's menu or the **Git** menu does the same
+for a file. The arrows beside the count of files, or **,** and **.**, show the previous and next file. **Show All
+Files** in the layout menu puts every file in one scroll instead: as you scroll, source control chooses the file you
+are reading. The diff follows a file as you type in it.
 
 Each header shows the file's icon, its path, a badge of its state (where a renamed file came from, too), and the lines
-added and removed, in numbers and in a bar of five blocks. Click a header to fold its file; a file with more than 2,000
-changed lines starts folded. Point at a header, or choose
+added and removed, in numbers and in a bar of five blocks. With all files shown, click a header to fold its file; a file with
+more than 2,000 changed lines starts folded. Point at a header, or choose
 it, for buttons that open the file, stage or unstage it, and discard its changes. Files are read as they come near the
 view, so a long list of changes opens at once.
 

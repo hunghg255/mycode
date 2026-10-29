@@ -352,7 +352,7 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         .open => |o| {
             const p = g.dupe(u8, o.path) catch return;
             defer g.free(p);
-            openChangesTab(wb, p, false);
+            openChangesTab(wb, p, o.staged);
         },
         .open_file => |rel| {
             const t = top(wb) orelse return;
@@ -398,7 +398,7 @@ pub fn scmEvent(wb: *Workbench, c: *ui.Context, ev: scm_mod.Event) void {
         },
         .unstage_all => _ = quick(wb, &.{ "reset", "-q", "HEAD", "--", "." }),
         .discard_all => wb.ask(.discard_all, "", "Discard all changes?", "Every change not staged is lost, and untracked files go to the Recycle Bin.", &.{ "Cancel", "Discard All" }),
-        .open_all => openChangesTab(wb, null, true),
+        .open_all => openChangesTab(wb, null, null),
         .reveal => |rel| if (top(wb)) |t| {
             const abs = joinNative(g, t, rel) catch return;
             defer g.free(abs);
@@ -671,9 +671,9 @@ pub fn promptAnswer(wb: *Workbench, purpose: @import("prompt.zig").Purpose, answ
     return true;
 }
 
-/// Opens (or shows) the Changes tab, on a file (absolute or relative).
-pub fn openChangesTab(wb: *Workbench, path: ?[]const u8, keep: bool) void {
-    _ = keep;
+/// Opens (or shows) the Changes tab, on a file (absolute or relative):
+/// its staged changes or the rest, as `staged` says, else the first.
+pub fn openChangesTab(wb: *Workbench, path: ?[]const u8, staged: ?bool) void {
     const t = top(wb) orelse return;
     var ed = &wb.editors;
     var found: ?*Changes = null;
@@ -700,7 +700,7 @@ pub fn openChangesTab(wb: *Workbench, path: ?[]const u8, keep: bool) void {
         if (rel.len <= buf.len) {
             @memcpy(buf[0..rel.len], rel);
             std.mem.replaceScalar(u8, buf[0..rel.len], '\\', '/');
-            ch.list.select(buf[0..rel.len]);
+            ch.list.select(buf[0..rel.len], staged);
         }
     }
 }

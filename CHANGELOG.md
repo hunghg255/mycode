@@ -5,6 +5,15 @@ needs a `## <version>` section here, or its build fails.
 
 ## Unreleased
 
+- The **Changes** tab shows one file at a time: click another in source control, or use the arrows beside the
+  count of files (**,** and **.**), to see it. **Show All Files** in the layout menu brings back the one scroll of every
+  file (the `diffAllFiles` setting).
+- Closing a project no longer freezes the window for a while: it waited for the folder's watcher to finish reading
+  the whole folder, which on a big one not yet read from disk took over a minute.
+
+- Icons are sharp at display scales such as 125%: the sidebar's view buttons, file icons and the title bar's buttons
+  fell between the screen's pixels and showed blurred.
+
 - **Search** no longer crashes on a long line with accented letters (Vietnamese, for one): the result shows the line
   around its match, and that cut could fall inside a letter, which the text measure then refused. Such a result no
   longer starts with stray symbols either.

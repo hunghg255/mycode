@@ -80,7 +80,7 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
                 ed.move(from, ni, 0);
             }
         },
-        .open_all_changes => wbgit.openChangesTab(wb, null, true),
+        .open_all_changes => wbgit.openChangesTab(wb, null, null),
         .show_change => if (doc) |d| {
             d.updateMarks(wb.scm.top);
             const line = d.editor.area.caretLine();
@@ -176,7 +176,7 @@ pub fn run(wb: *Workbench, c: *ui.Context, cmd: Cmd) void {
             if (d.nextChange(cmd == .next_change)) |line| d.editor.goToLine(line + 1);
         },
         .stage_change, .revert_change => wbgit.hunkAtCaret(wb, cmd == .stage_change),
-        .open_changes => wbgit.openChangesTab(wb, if (doc) |d| d.path else null, true),
+        .open_changes => wbgit.openChangesTab(wb, if (doc) |d| d.path else null, null),
         .accept_current, .accept_incoming, .accept_both => wbgit.acceptConflict(wb, switch (cmd) {
             .accept_current => .current,
             .accept_incoming => .incoming,

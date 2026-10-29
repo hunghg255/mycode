@@ -173,10 +173,19 @@ const cases = [_]Case{
     },
     .{
         // Files are read in the background: the diff shows once they are.
+        // One file at a time: a click in source control shows another.
         .name = "the Changes tab shows each changed file's diff",
         .files = files_ab,
         .repos = &.{"alpha"},
         .changes = &.{ .{ .path = "alpha/a.txt", .data = "first line changed\n" }, .{ .path = "alpha/b.txt", .data = "second line changed\n" } },
+        .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;live:1;" ++ palette ++ "Open All Changes;key:enter;live:2;move:first line changed;visible:1/2;shortcut:ctrl+shift+g;live:1;click:b.txt;live:2;move:second line changed;visible:2/2" }},
+    },
+    .{
+        .name = "the Changes tab shows all files in one scroll when told",
+        .files = files_ab,
+        .repos = &.{"alpha"},
+        .changes = &.{ .{ .path = "alpha/a.txt", .data = "first line changed\n" }, .{ .path = "alpha/b.txt", .data = "second line changed\n" } },
+        .settings = "{\"diffAllFiles\": true}",
         .runs = &.{.{ .open = &.{"alpha"}, .script = "frames:3;live:1;" ++ palette ++ "Open All Changes;key:enter;live:2;move:first line changed;move:second line changed" }},
     },
     .{

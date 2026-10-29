@@ -272,7 +272,14 @@ fn diffList(wb: *Workbench, c: *ui.Context, dl: *@import("difflist.zig").DiffLis
     dl.wrap_setting = st.s.wordWrap;
     dl.reviewing = wb.review.list.items.len > 0;
     dl.weight = @intFromFloat(st.s.fontWeight);
+    // The Changes tab shows a file at a time unless told otherwise; a
+    // commit's, without a list of its own, every file.
+    if (dl.editable) dl.single = !st.s.diffAllFiles;
     const ev = dl.view(c, wbgit.reader(wb), chrome, &wb.review, themes.syntax(wb.shell.palette));
+    if (dl.single_chosen) {
+        dl.single_chosen = false;
+        st.setBool("diffAllFiles", !dl.single);
+    }
     if (dl.layout_chosen) {
         dl.layout_chosen = false;
         st.setString("diffLayout", switch (dl.layout) {

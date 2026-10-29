@@ -131,6 +131,11 @@ pub const DiffList = struct {
     focus_id: u64 = 0,
     menu: ui.Menu = .{},
     selected_entry: usize = 0,
+    /// Only the selected entry shows; source control or the bar's arrows
+    /// choose another.
+    single: bool = false,
+    /// Set when the menu turned `single` over, for the app to keep.
+    single_chosen: bool = false,
     /// Known to jobs (a read in the background), which drop their texts
     /// once the list is gone.
     registered: bool = false,
@@ -206,13 +211,25 @@ pub const DiffList = struct {
         return &dl.entries.items[@min(dl.selected_entry, dl.entries.items.len - 1)];
     }
 
-    /// Shows the entry of a path (the first, staged before unstaged).
-    pub fn select(dl: *DiffList, path: []const u8) void {
+    /// Shows the entry of a path: staged or not as asked, else the first
+    /// (staged before unstaged).
+    pub fn select(dl: *DiffList, path: []const u8, staged: ?bool) void {
+        var found: ?usize = null;
         for (dl.entries.items, 0..) |e, i| if (std.mem.eql(u8, e.path, path)) {
-            dl.selected_entry = i;
-            dl.reveal_entry = i;
-            return;
+            if (found == null) found = i;
+            if (staged == null or staged.? == e.staged) {
+                found = i;
+                break;
+            }
         };
+        if (found) |i| dl.showEntry(i);
+    }
+
+    /// Shows entry `i` (clamped) at the top: alone, while `single`.
+    fn showEntry(dl: *DiffList, i: usize) void {
+        if (dl.entries.items.len == 0) return;
+        dl.selected_entry = @min(i, dl.entries.items.len - 1);
+        dl.reveal_entry = dl.selected_entry;
     }
 
     /// Reads the sides again of the entries read (a file changed).
@@ -282,9 +299,12 @@ pub const DiffList = struct {
     /// The rows of every entry, made again each frame.
     fn build(dl: *DiffList, c: *ui.Context, review: ?*const Review, split_mode: bool) void {
         dl.refs.clearRetainingCapacity();
+        if (dl.entries.items.len > 0) dl.selected_entry = @min(dl.selected_entry, dl.entries.items.len - 1);
         for (dl.entries.items, 0..) |*e, ei| {
+            if (dl.single and ei != dl.selected_entry) continue;
             dl.refs.append(dl.gpa, .{ .header = ei }) catch return;
-            if (e.folded) continue;
+            // A file alone isn't folded.
+            if (e.folded and !dl.single) continue;
             if (!e.loaded) {
                 dl.refs.append(dl.gpa, .{ .loading = ei }) catch return;
                 continue;
@@ -468,6 +488,12 @@ pub const DiffList = struct {
                 deleted += e.deleted;
             }
             ui.text(c, c.print("{d} file{s}  +{d} −{d}", .{ dl.entries.items.len, if (dl.entries.items.len == 1) "" else "s", added, deleted }), .{ .size = 11, .color = t.muted });
+            if (dl.single) {
+                const count = dl.entries.items.len;
+                if (iconTool(c, "chevron.left", "Previous File (,)", false)) dl.showEntry(if (dl.selected_entry == 0) count - 1 else dl.selected_entry - 1);
+                ui.text(c, c.print("{d}/{d}", .{ dl.selected_entry + 1, count }), .{ .size = 11, .color = t.muted, .mono = true });
+                if (iconTool(c, "chevron.right", "Next File (.)", false)) dl.showEntry((dl.selected_entry + 1) % count);
+            }
             // As the Go app's: icons with their tooltips.
             if (iconTool(c, "arrow.up", "Previous Change ([)", false)) if (dl.next(.hunk, false)) |i| dl.moveTo(i, false);
             if (iconTool(c, "arrow.down", "Next Change (])", false)) if (dl.next(.hunk, true)) |i| dl.moveTo(i, false);
@@ -490,25 +516,40 @@ pub const DiffList = struct {
                     dl.layout_chosen = true;
                 };
                 m.separator();
-                if (m.item("Fold All Files", .{})) for (dl.entries.items) |*e| {
-                    e.folded = true;
-                };
-                if (m.item("Unfold All Files", .{})) for (dl.entries.items) |*e| {
-                    e.folded = false;
-                };
+                if (dl.editable and m.item("Show All Files", .{ .checked = !dl.single })) {
+                    dl.single = !dl.single;
+                    dl.single_chosen = true;
+                    dl.showEntry(dl.selected_entry);
+                }
+                if (!dl.single) {
+                    if (m.item("Fold All Files", .{})) for (dl.entries.items) |*e| {
+                        e.folded = true;
+                    };
+                    if (m.item("Unfold All Files", .{})) for (dl.entries.items) |*e| {
+                        e.folded = false;
+                    };
+                }
             }
             if (iconTool(c, if (cur.sub) "folder" else "doc.text", if (cur.sub) "Open Folder (E)" else "Open File (E)", false)) ev = .{ .open = .{ .path = cur.path, .line = 1 } };
             if (dl.reviewing and ui.button(c, "Send Review", .{ .variant = .primary, .size = 11 }).clicked) ev = .send_review;
         }
         // Where to scroll: an entry to show, a row to keep in view.
         if (dl.reveal_entry) |re| {
-            dl.reveal_entry = null;
             for (dl.refs.items, 0..) |rf, i| if (rf == .header and rf.header == re) {
                 dl.sel = i;
                 dl.anchor = i;
                 dl.scroll_to = i;
+                dl.reveal_entry = null;
                 break;
             };
+            // Another file chosen this frame while one shows alone: built
+            // in the frame made again.
+            if (dl.reveal_entry != null) {
+                if (dl.single and re < dl.entries.items.len) {
+                    dl.selected_entry = re;
+                    c.changed = true;
+                } else dl.reveal_entry = null;
+            }
         }
         const to: ?f32 = if (dl.scroll_to) |i| @as(f32, @floatFromInt(i)) * row_h else null;
         dl.scroll_to = null;
@@ -633,7 +674,7 @@ pub const DiffList = struct {
         var ev: Event = .none;
         const e = &dl.entries.items[ei];
         const row = ui.div(c).row().wFull().h(row_h).px(8).gap(6).itemsCenter().bg(chrome).hover(t.surface_hover);
-        icons.sym(c, if (e.folded) "chevron.right" else "chevron.down", .{ .size = 9, .color = t.muted });
+        if (!dl.single) icons.sym(c, if (e.folded) "chevron.right" else "chevron.down", .{ .size = 9, .color = t.muted });
         if (e.sub) icons.sym(c, "folder", .{ .size = 12, .color = t.accent }) else icons.file(c, std.fs.path.basename(e.path));
         if (std.fs.path.dirnamePosix(e.path)) |d| ui.text(c, c.print("{s}/", .{d}), .{ .size = 12, .color = t.muted });
         ui.text(c, std.fs.path.basenamePosix(e.path), .{ .size = 12, .weight = .semibold });
@@ -674,7 +715,7 @@ pub const DiffList = struct {
                 }
             }
         }
-        if (row.clicked() and !acted) {
+        if (row.clicked() and !acted and !dl.single) {
             e.folded = !e.folded;
             c.changed = true;
         }
@@ -718,8 +759,14 @@ pub const DiffList = struct {
         if (c.shortcut(.{ .key = 'k', .shift = true }) or c.shortcut(.{ .key = S.up, .shift = true })) dl.moveTo(dl.sel -| 1, true);
         if (c.shortcut(.{ .key = ']' })) if (dl.next(.hunk, true)) |i| dl.moveTo(i, false);
         if (c.shortcut(.{ .key = '[' })) if (dl.next(.hunk, false)) |i| dl.moveTo(i, false);
-        if (c.shortcut(.{ .key = '.' })) if (dl.next(.header, true)) |i| dl.moveTo(i, false);
-        if (c.shortcut(.{ .key = ',' })) if (dl.next(.header, false)) |i| dl.moveTo(i, false);
+        if (dl.single) {
+            const count = dl.entries.items.len;
+            if (c.shortcut(.{ .key = '.' })) dl.showEntry((dl.selected_entry + 1) % count);
+            if (c.shortcut(.{ .key = ',' })) dl.showEntry(if (dl.selected_entry == 0) count - 1 else dl.selected_entry - 1);
+        } else {
+            if (c.shortcut(.{ .key = '.' })) if (dl.next(.header, true)) |i| dl.moveTo(i, false);
+            if (c.shortcut(.{ .key = ',' })) if (dl.next(.header, false)) |i| dl.moveTo(i, false);
+        }
         if (c.shortcut(.{ .key = ' ' }) or c.shortcut(.{ .key = 'f' }) or c.shortcut(.{ .key = S.page_down })) dl.moveTo(dl.sel + page, false);
         if (c.shortcut(.{ .key = 'b' }) or c.shortcut(.{ .key = S.page_up })) dl.moveTo(dl.sel -| page, false);
         if (c.shortcut(.{ .key = 'd' })) dl.moveTo(dl.sel + page / 2, false);
@@ -730,7 +777,9 @@ pub const DiffList = struct {
         const rf = dl.refs.items[dl.sel];
         if (c.shortcut(.{ .key = 'z' }) or c.shortcut(.{ .key = S.enter })) {
             switch (rf) {
-                .header => |ei| dl.entries.items[ei].folded = !dl.entries.items[ei].folded,
+                .header => |ei| if (!dl.single) {
+                    dl.entries.items[ei].folded = !dl.entries.items[ei].folded;
+                },
                 .row => |rr| {
                     const d = &(dl.entries.items[rr.entry].dv orelse return .none);
                     const row = d.rows.items[rr.row];

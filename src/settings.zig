@@ -42,6 +42,7 @@ pub const Settings = struct {
     minimap: bool = true,
     minimapWidth: f32 = 90,
     diffLayout: []const u8 = "",
+    diffAllFiles: bool = false,
     scmTree: bool = false,
     scmAllBranches: bool = false,
 };

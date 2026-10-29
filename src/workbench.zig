@@ -345,7 +345,7 @@ pub const Workbench = struct {
                         else => {},
                     }
                 } else if (std.mem.eql(u8, ts.kind, "changes")) {
-                    wbgit.openChangesTab(wb, null, false);
+                    wbgit.openChangesTab(wb, null, null);
                 } else if (std.mem.eql(u8, ts.kind, "commit")) {
                     wbgit.openCommit(wb, ts.path, false);
                 } else if (std.mem.eql(u8, ts.kind, "terminal")) {

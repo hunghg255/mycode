@@ -43,7 +43,11 @@ pub const Changes = struct {
         };
         var keep: ?[]u8 = null;
         defer if (keep) |k| g.free(k);
-        if (ch.list.current()) |e| keep = g.dupe(u8, e.path) catch null;
+        var keep_staged = false;
+        if (ch.list.current()) |e| {
+            keep = g.dupe(u8, e.path) catch null;
+            keep_staged = e.staged;
+        }
 
         // The files read before keep their diffs, read again in the
         // background, rather than loading afresh (the list would jump).
@@ -76,13 +80,16 @@ pub const Changes = struct {
             ch.list.markSub(c.sub);
         };
         ch.list.keepFrom(before.items);
-        for (ch.list.entries.items, 0..) |*e, i| {
+        for (ch.list.entries.items) |*e| {
             var kb: [std.fs.max_path_bytes + 40]u8 = undefined;
             const k = std.fmt.bufPrint(&kb, "{s}\x00{s}", .{ e.group, e.path }) catch continue;
             if (folded.contains(k)) e.folded = true;
-            if (keep) |kp| if (std.mem.eql(u8, kp, e.path)) {
-                ch.list.selected_entry = i;
-            };
         }
+        // The file shown stays, staged or not as it was when it still is
+        // both (staging it all moves it to the staged changes).
+        if (keep) |kp| for (ch.list.entries.items, 0..) |e, i| if (std.mem.eql(u8, kp, e.path)) {
+            ch.list.selected_entry = i;
+            if (e.staged == keep_staged) break;
+        };
     }
 };
